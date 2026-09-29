@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repo-intelligence"
+version = "1.0.0"
+description = "Repository intelligence: scanning, indexing, and semantic search for codebases"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+repo-index = "repo_intelligence.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
