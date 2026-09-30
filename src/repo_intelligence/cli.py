@@ -23,10 +23,12 @@ def _print_json(data):
     click.echo(json.dumps(data, indent=2))
 
 
-@click.group()
-def cli():
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
     """Repository Intelligence - scanning, indexing, and searching codebases."""
-    pass
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 
 @cli.command("build")
@@ -92,19 +94,19 @@ def cmd_build(path, index_path, ignore_dirs):
             conn.commit()
         conn.close()
 
-    click.echo(f"Indexed {len(files_list)} files from \'{path}\' into \'{db_file}\'.")
+    click.echo(f"Indexed {len(files_list)} files from '{path}' into '{db_file}'.")
 
 
 @cli.command("stats")
-@click.argument("db_path", type=click.Path(exists=True), default=None, required=False)
+@click.option("--db-path", "db_file", default=None, help="Path to the index database file. Defaults to the external location for CWD.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
-def cmd_stats(db_path, as_json):
+def cmd_stats(db_file, as_json):
     """Show indexing statistics for the given database."""
-    if db_path is None:
-        db_path = _db_path(".")
+    if db_file is None:
+        db_file = _db_path(".")
 
     try:
-        stats_data = get_stats(db_path)
+        stats_data = get_stats(db_file)
     except FileNotFoundError:
         click.echo("Error: No index database found.", err=True)
         raise SystemExit(1)
@@ -112,9 +114,12 @@ def cmd_stats(db_path, as_json):
     if as_json:
         _print_json(stats_data)
     else:
-        click.echo(f"Repository    : {stats_data.get(\\"repo_name\", \\"N/A\\")}")
-        click.echo(f"Total files   : {stats_data[\\"total_files\"]}")
-        click.echo(f"Total bytes   : {stats_data[\\"total_bytes\"]}")
+        repo_name = stats_data.get("repo_name", "N/A")
+        total_files = stats_data.get("total_files", 0)
+        total_bytes = stats_data.get("total_bytes", 0)
+        click.echo(f"Repository    : {repo_name}")
+        click.echo(f"Total files   : {total_files}")
+        click.echo(f"Total bytes   : {total_bytes}")
         lb = stats_data.get("language_breakdown", {})
         if lb:
             click.echo("")
@@ -124,18 +129,25 @@ def cmd_stats(db_path, as_json):
 
 
 @cli.command("files")
-@click.argument("db_path", type=click.Path(exists=True), default=None, required=False)
-@click.option("--lang", "lang_filter", default=None, help="Filter by language name.")
+@click.option("--db-path", "db_file", default=None, help="Path to the index database file.")
+@click.option("--lang", "lang_filter", default=None, help="Filter by language name (case-insensitive).")
+@click.option("--path", "path_prefix", default=None, help="Filter by repository-relative path prefix (e.g. 'tests/').")
 @click.option("--limit", "limit_val", default=100, help="Maximum number of results.")
 @click.option("--offset", "offset_val", default=0, help="Row offset for pagination.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
-def cmd_files(db_path, lang_filter, limit_val, offset_val, as_json):
-    """List indexed files with optional language filtering."""
-    if db_path is None:
-        db_path = _db_path(".")
+def cmd_files(db_file, lang_filter, path_prefix, limit_val, offset_val, as_json):
+    """List indexed files with optional language and path filtering."""
+    if db_file is None:
+        db_file = _db_path(".")
 
     try:
-        flist = get_file_list(db_path, lang_filter=lang_filter, limit=limit_val, offset=offset_val)
+        flist = get_file_list(
+            db_file,
+            lang_filter=lang_filter,
+            path_prefix=path_prefix,
+            limit=limit_val,
+            offset=offset_val,
+        )
     except FileNotFoundError:
         click.echo("Error: No index database found.", err=True)
         raise SystemExit(1)
@@ -147,22 +159,24 @@ def cmd_files(db_path, lang_filter, limit_val, offset_val, as_json):
             click.echo("No files matched.")
         else:
             for entry in flist:
-                sz = f" ({entry[\\"size\\"]} B)" if entry.get("size") else ""
-                click.echo(f"  {entry[\\"rel_path\\"]} [{entry[\\"language\\"]}{sz}]")
-            click.echo(f"\\nShowing {len(flist)} of indexed files.")
+                sz = f" ({entry['size']} B)" if entry.get("size") else ""
+                rp = entry["rel_path"]
+                lang = entry["language"]
+                click.echo(f"  {rp} [{lang}{sz}]")
+            click.echo(f"\nShowing {len(flist)} of indexed files.")
 
 
 @cli.command("search-files")
 @click.argument("query")
-@click.argument("db_path", type=click.Path(exists=True), default=None, required=False)
+@click.option("--db-path", "db_file", default=None, help="Path to the index database file.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
-def cmd_search_files(query, db_path, as_json):
+def cmd_search_files(query, db_file, as_json):
     """Search indexed file contents."""
-    if db_path is None:
-        db_path = _db_path(".")
+    if db_file is None:
+        db_file = _db_path(".")
 
     try:
-        matches = search_files(db_path, query)
+        matches = search_files(db_file, query)
     except FileNotFoundError:
         click.echo("Error: No index database found.", err=True)
         raise SystemExit(1)
@@ -171,11 +185,13 @@ def cmd_search_files(query, db_path, as_json):
         _print_json(matches)
     else:
         if not matches:
-            click.echo(f"No results for \'{query}\'.")
+            click.echo(f"No results for '{query}'.")
         else:
-            click.echo(f"Results for \'{query}\':")
+            click.echo(f"Results for '{query}':")
             for entry in matches:
-                click.echo(f"  {entry[\\"rel_path\\"]} [{entry[\\"language\\"]}]")
+                rp = entry["rel_path"]
+                lang = entry["language"]
+                click.echo(f"  {rp} [{lang}]")
 
 
 if __name__ == "__main__":

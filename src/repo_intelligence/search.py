@@ -5,17 +5,35 @@ import os
 import sqlite3
 from pathlib import Path
 
+# External base directory for all index databases (XDG_DATA_HOME compliant)
+def _default_db_base():
+    """Return the external base directory, respecting XDG_DATA_HOME when set."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return os.path.join(xdg, "repo-intelligence")
+    return os.path.join(os.path.expanduser("~"), ".local", "share", "repo-intelligence")
+
 
 def db_path(repo_dir: str) -> str:
-    """Return the path to the index database file inside a repo directory.
+    """Return the path to the index database file for a given repository.
+
+    The database is stored in an *external* directory under ``~/.local/share/repo-intelligence/``
+    (or wherever :envvar:`XDG_DATA_HOME` points) using a deterministic subdirectory
+    derived from the repository's absolute path.  This keeps indexed artifacts out of
+    the working tree while guaranteeing the same repo always maps to the same location.
 
     Args:
         repo_dir: Path to the repository root.
 
     Returns:
-        Absolute path to `.repo_intelligence/index.db` under `repo_dir`.
+        Absolute path to ``<external_base>/<repo-sha256-abbrev>/index.db``.
     """
-    db_dir = os.path.join(repo_dir, ".repo_intelligence")
+    abs_repo = os.path.abspath(repo_dir)
+    # Use the first 16 hex chars of the SHA-256 digest as a deterministic,
+    # collision-resistant subdirectory name — short enough to avoid nesting issues
+    # yet unique for practically all repository use-cases.
+    repo_hash = hashlib.sha256(abs_repo.encode()).hexdigest()[:16]
+    db_dir = os.path.join(_default_db_base(), repo_hash)
     return os.path.join(db_dir, "index.db")
 
 
@@ -39,12 +57,14 @@ def create_database(db_path_arg: str) -> None:
 
     conn = sqlite3.connect(db_file)
     try:
-        conn.executescript("""
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS repo_info (
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+        """)
 
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 rel_path   TEXT NOT NULL UNIQUE,
@@ -53,19 +73,14 @@ def create_database(db_path_arg: str) -> None:
                 sha256     TEXT NOT NULL DEFAULT '',
                 is_binary  INTEGER NOT NULL DEFAULT 0
             );
-
-            CREATE TABLE IF NOT EXISTS file_content_fts (
-                rel_path   TEXT PRIMARY KEY,
-                content    FTS5 CONTENT=''
-            ) USING fts5(content, content_table='files', content_rowid='rel_path');
         """)
-        # Use a simpler approach: create FTS5 with an explicit content table later
+
+        # Drop any stale FTS5 table and recreate fresh
         conn.execute("DROP TABLE IF EXISTS file_content_fts")
         conn.execute("""
             CREATE VIRTUAL TABLE file_content_fts USING fts5(
                 rel_path,
-                content,
-                content_files = files
+                content
             );
         """)
     finally:
@@ -110,7 +125,7 @@ def _ensure_table(conn: sqlite3.Connection) -> None:
     if "rel_path" not in columns or "content" not in columns:
         conn.execute("DROP TABLE IF EXISTS file_content_fts")
         conn.execute(
-            "CREATE VIRTUAL TABLE file_content_fts USING fts5(rel_path, content, content_table='files')"
+            "CREATE VIRTUAL TABLE file_content_fts USING fts5(rel_path, content)"
         )
 
 
@@ -172,17 +187,15 @@ def search_files(db_file: str, query: str) -> list[dict]:
     try:
         _ensure_table(conn)
 
-        # Check for `like:` prefix
+        # Check for `like:` prefix → glob-style pattern matching on rel_path
         if query.lower().startswith("like:"):
             pattern = query[len("like:"):]
-            # Convert glob wildcard * to %
             like_pattern = pattern.replace("*", "%")
             cursor = conn.execute(
                 """
                 SELECT rel_path, language, size, sha256
                 FROM files
-                JOIN file_content_fts USING (rel_path)
-                WHERE file_content_fts.content LIKE ?
+                WHERE rel_path LIKE ?
                 """,
                 (like_pattern,),
             )
@@ -213,12 +226,15 @@ def search_files(db_file: str, query: str) -> list[dict]:
         conn.close()
 
 
-def get_file_list(db_file: str, lang_filter=None, limit=1000, offset=0) -> list[dict]:
+def get_file_list(db_file: str, lang_filter=None, path_prefix=None, limit=1000, offset=0) -> list[dict]:
     """Return a list of indexed files.
 
     Args:
         db_file: Path to the database file.
         lang_filter: Optional language name for filtering (e.g., ``"Python"``).
+            Matching is case-insensitive.
+        path_prefix: Optional repository-relative path prefix for filtering
+            (e.g., ``"tests/"`` matches ``"tests/route_search_observer.py"``).
         limit: Maximum number of rows to return (default 1000).
         offset: Row offset for pagination (default 0).
 
@@ -229,27 +245,26 @@ def get_file_list(db_file: str, lang_filter=None, limit=1000, offset=0) -> list[
     try:
         _ensure_table(conn)
 
-        if lang_filter:
-            cursor = conn.execute(
-                """
-                SELECT rel_path, language, size, sha256
-                FROM files
-                WHERE language = ?
-                ORDER BY rel_path
-                LIMIT ? OFFSET ?
-                """,
-                (lang_filter, limit, offset),
-            )
-        else:
-            cursor = conn.execute(
-                """
-                SELECT rel_path, language, size, sha256
-                FROM files
-                ORDER BY rel_path
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            )
+        conditions: list[str] = []
+        params: list = []
+
+        if lang_filter is not None:
+            conditions.append("LOWER(language) = LOWER(?)")
+            params.append(lang_filter)
+        if path_prefix is not None:
+            conditions.append("rel_path LIKE ?")
+            params.append(path_prefix.rstrip("/") + "/%")
+
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        query = (
+            "SELECT rel_path, language, size, sha256 FROM files"
+            f"{where_clause}"
+            " ORDER BY rel_path LIMIT ? OFFSET ?"
+        )
+        params.extend([limit, offset])
+
+        cursor = conn.execute(query, params)
 
         return [
             {
@@ -274,6 +289,14 @@ def get_stats(db_file: str) -> dict:
         - total_bytes: sum of file sizes.
         - language_breakdown: ``{language: count}`` of all indexed files.
     """
+    if not os.path.exists(db_file):
+        return {
+            "repo_name": "unknown",
+            "total_files": 0,
+            "total_bytes": 0,
+            "language_breakdown": {},
+        }
+
     conn = sqlite3.connect(db_file)
     try:
         _ensure_table(conn)
@@ -295,10 +318,10 @@ def get_stats(db_file: str) -> dict:
         lang_breakdown = {row[0]: row[1] for row in lang_rows}
 
         # Merge repo info from raw_info into a dict-like structure
+        name_val = raw_info.get("name") or raw_info.get("repo_name", "unknown") if raw_info else "unknown"
         meta = {}
         if raw_info:
             import json
-            name_val = raw_info.get("name") or raw_info.get("repo_name", "unknown")
             # Handle JSON-encoded values
             for key in ("branch", "commit_hash"):
                 kdbkey = "current_branch" if key == "branch" else key

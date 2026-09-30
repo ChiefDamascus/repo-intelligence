@@ -110,7 +110,7 @@ DEFAULT_EXCLUDE_DIRS = frozenset({
 BINARY_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", "7z",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
     ".so", ".dll", ".dylib", ".a", ".o", ".pyc", ".pyo",
     ".woff", ".woff2", ".ttf", ".eot",
     ".mp3", ".mp4", ".avi", ".mov", ".wmv",
@@ -168,7 +168,10 @@ def _matches_gitignore(rel_path: str, gitignore_patterns: list[str], is_dir: boo
     - Exact filenames (e.g., "*.txt")
     - Directory patterns with trailing slash (e.g., "logs/")
     - Path segments matching (pattern applies at any directory depth)
+    - Root-anchored patterns (leading /, only matches at repo root)
     """
+    # Normalize leading ./ that git sometimes produces
+    rel_path = rel_path.removeprefix("./")
     parts = rel_path.replace("\\", "/").split("/")
 
     for pattern in gitignore_patterns:
@@ -178,23 +181,24 @@ def _matches_gitignore(rel_path: str, gitignore_patterns: list[str], is_dir: boo
         # Pattern ends with / => directory-only pattern
         if pattern.endswith("/"):
             dir_prefix = pattern.rstrip("/")
+            # Check cumulative prefixes (vendor/node_modules) against dir prefix
             for i in range(len(parts)):
                 part_parts = parts[:i + 1]
                 segment = "/".join(part_parts)
                 if _fnmatch_ignore(segment, dir_prefix):
+                    return True
+            # Also check individual path parts (handles "node_modules/" finding it at any depth)
+            for part in parts:
+                if _fnmatch_ignore(part, dir_prefix):
                     return True
             continue
 
         # Pattern starts with / is a repo-root relative pattern
         if pattern.startswith("/"):
             inner = pattern.lstrip("/")
-            if _fnmatch_ignore(rel_path.replace("\\", "/"), inner) or \
-               (not rel_path.startswith(inner) and os.path.basename(parts[-1]) == os.path.basename(inner)):
-                # Check if any suffix of the path matches the pattern
-                for i in range(len(parts)):
-                    sub = "/".join(parts[i:])
-                    if _fnmatch_ignore(sub, inner):
-                        return True
+            # Root-anchored: only match at the first path component (repo root)
+            if parts and _fnmatch_ignore(parts[0], inner):
+                return True
             continue
 
         # Pattern starts with ** => match at any depth
