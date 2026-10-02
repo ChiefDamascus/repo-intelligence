@@ -7,7 +7,45 @@ importing, executing, or mutating the source files.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ImportRecord:
+    """Immutable representation of a single Python import declaration.
+
+    Attributes:
+        kind: ``"import"`` or ``"from_import"``.
+        module: the source module from which something is imported.
+                for ``import X.Y``, the full dotted path (e.g. ``"X.Y"``);
+                for ``from A.B import Z``, the source module ``"A.B"``;
+                empty string for relative imports with no explicit base
+                (``from . import ...``).   The value is *never* ``None`` —
+                callers relying on this must not get a special sentinel in
+                one branch and ``""`` in another.
+        names: list of imported identifiers (immutable tuple) in source order
+               (e.g. ``tuple[{name, asname}]``).  For wildcard imports the
+               name is ``"*"``, with ``"asname"`` always ``None``.
+        level: relative-import depth (``0`` for absolute imports).
+        source_path: the file path where this import was found.
+        start_line: 1-based line number of the import statement.
+        start_col: 0-based column offset of the import keyword within its
+                   line, from ``ast.Import.col_offset`` /
+                   ``ast.ImportFrom.col_offset``.
+    """
+
+    kind: str
+    module: str
+    names: tuple[tuple[str, str | None], ...]
+    level: int
+    source_path: str
+    start_line: int
+    start_col: int
 
 
 # ---------------------------------------------------------------------------
@@ -419,3 +457,155 @@ def extract_symbols_for_files(
     }
 
     return all_symbols, stats_dict
+
+
+# ---------------------------------------------------------------------------
+# Import extraction — public API
+# ---------------------------------------------------------------------------
+
+
+def _make_name_entry(alias_node: ast.alias) -> tuple[str, str | None]:
+    """Return an immutable ``(name, asname)`` pair for a single AST *alias* node."""
+    return (alias_node.name, alias_node.asname)
+
+
+def _handle_import(
+    stmt_type: str,
+    node: ast.Import | ast.ImportFrom,
+    rel_path: str,
+) -> list[ImportRecord]:
+    """Core logic shared by ``ast.Import`` and ``ast.ImportFrom`` handling."""
+    start_col = getattr(node, "col_offset", 0)
+    if isinstance(node, ast.Import):
+        # `import os` — one record per alias; module = the dotted name itself.
+        records: list[ImportRecord] = []
+        for alias in node.names:
+            records.append(
+                ImportRecord(
+                    kind="import",
+                    module=alias.name,
+                    names=(_make_name_entry(alias),),
+                    level=0,
+                    source_path=rel_path,
+                    start_line=node.lineno,
+                    start_col=start_col,
+                )
+            )
+        return records
+
+    # ImportFrom
+    mod_name = node.module  # may be None for ``from . import ...``
+    level = getattr(node, "level", 0) or 0
+    recs: list[ImportRecord] = []
+
+    if not node.names:
+        return recs
+
+    # Preserve source order — do NOT alphabetically sort.
+    names_list: tuple[tuple[str, str | None], ...] = tuple(
+        _make_name_entry(a) for a in node.names
+    )
+    mod = mod_name or ""  # empty string for `from . import X`
+    if stmt_type == "from_import":
+        recs.append(
+            ImportRecord(
+                kind="from_import",
+                module=mod,
+                names=names_list,
+                level=level,
+                source_path=rel_path,
+                start_line=node.lineno,
+                start_col=start_col,
+            )
+        )
+
+    return recs
+
+
+def extract_file_imports(rel_path: str, source: str) -> list[ImportRecord]:
+    """Parse *source* text (for file at *rel_path*) and collect import declarations.
+
+    Returns an empty list on any parse / AST error — never raises.
+    Imports are collected by walking the AST so that imports inside functions,
+    classes, ``if``/``try`` blocks, etc. are all discovered.
+
+    Results are **sorted by ``(start_line, start_col)``** (stable) so that
+    imports appear in exact lexical source-order regardless of
+    ``ast.walk()`` traversal direction.  When two distinct import statements
+    share the same physical line, ``start_col`` distinguishes them by their
+    column offset from the AST.  Aliases from the same AST node keep their
+    original relative order because Python's :py:func:`sorted` is stable.
+    """
+    if not _is_python_file(rel_path):
+        return []
+
+    try:
+        tree = ast.parse(source, filename=rel_path)
+    except SyntaxError:
+        return []
+
+    result: list[ImportRecord] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            extracted = _handle_import(
+                stmt_type="import" if isinstance(node, ast.Import) else "from_import",
+                node=node,
+                rel_path=rel_path,
+            )
+            result.extend(extracted)
+
+    return sorted(result, key=lambda r: (r.start_line, r.start_col))
+
+
+def extract_imports_for_files(
+    files_meta: list[dict],
+) -> tuple[list[ImportRecord], dict[str, int]]:
+    """Extract imports for a batch of file metadata dicts.
+
+    Each *files_meta* entry must have ``rel_path`` and ``abs_path`` keys.
+
+    Returns:
+        ``(import_records, stats)`` where *stats* has keys
+        ``parsed_ok``, ``parse_errors``, ``total_python``, ``total_imports``.
+    """
+    all_imports: list[ImportRecord] = []
+    parsed_ok = 0
+    parse_errors = 0
+
+    for finfo in files_meta:
+        rel = finfo.get("rel_path", "")
+        abs_p = finfo.get("abs_path", "")
+        if not _is_python_file(rel):
+            continue
+
+        try:
+            with open(abs_p, "r", encoding="utf-8", errors="replace") as fh:
+                source = fh.read()
+        except (OSError, IOError, UnicodeDecodeError):
+            parse_errors += 1
+            continue
+
+        imps = extract_file_imports(rel, source)
+        if imps or _can_parse(source):
+            parsed_ok += 1
+        else:
+            parse_errors += 1
+
+        all_imports.extend(imps)
+
+    return all_imports, {
+        "parsed_ok": parsed_ok,
+        "parse_errors": parse_errors,
+        "total_python": sum(1 for f in files_meta if _is_python_file(f.get("rel_path", ""))),
+        "total_imports": len(all_imports),
+    }
+
+
+def _can_parse(source: str) -> bool:
+    """Check whether *source* is syntactically valid Python."""
+    try:
+        ast.parse(source)
+        return True
+    except SyntaxError:
+        return False
