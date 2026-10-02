@@ -93,6 +93,41 @@ def create_database(db_path_arg: str) -> None:
             );
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS imports (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                kind            TEXT NOT NULL,
+                module          TEXT NOT NULL DEFAULT '',
+                level           INTEGER NOT NULL DEFAULT 0,
+                start_line      INTEGER,
+                start_col       INTEGER
+            );
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS import_names (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                import_id       INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+                position        INTEGER NOT NULL,
+                name            TEXT NOT NULL,
+                asname          TEXT
+            );
+        """)
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_imports_file_id ON imports(file_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_names_import_id ON import_names(import_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_names_name ON import_names(name)"
+        )
+
         # Drop any stale FTS5 table and recreate fresh
         conn.execute("DROP TABLE IF EXISTS file_content_fts")
         conn.execute("""
@@ -174,6 +209,43 @@ def _ensure_symbols_table(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_symbols_qualified_name ON symbols(qualified_name)"
+    )
+
+
+def _ensure_imports_tables(conn: sqlite3.Connection) -> None:
+    """Ensure the imports/import_names tables and their indexes exist."""
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS imports (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            kind            TEXT NOT NULL,
+            module          TEXT NOT NULL DEFAULT '',
+            level           INTEGER NOT NULL DEFAULT 0,
+            start_line      INTEGER,
+            start_col       INTEGER
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS import_names (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_id       INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+            position        INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            asname          TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_imports_file_id ON imports(file_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_import_names_import_id ON import_names(import_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_import_names_name ON import_names(name)"
     )
 
 
@@ -568,3 +640,187 @@ def get_symbols_for_file_file_id(
         List of symbol dicts for that file, in DB-insertion order (ordered by *id*).
     """
     return get_symbols(db_file, file_id=file_id)
+
+
+# ---------------------------------------------------------------------------
+# Import persistence API
+# ---------------------------------------------------------------------------
+
+
+def replace_imports_for_file(
+    conn: sqlite3.Connection,
+    file_id: int,
+    records: list | None = None,
+) -> None:
+    """Replace all import rows for *file_id* with the provided records.
+
+    Strategy mirrors ``insert_symbols``: delete existing rows first, then
+    insert fresh ones in deterministic (source-order) position.
+
+    Args:
+        conn: Active SQLite connection.
+        file_id: Primary key of the associated file row.
+        records: List of :class:`~repo_intelligence.python_ast.ImportRecord`
+            objects or ``None`` / empty list to clear stale rows.  Each record
+            must have attributes ``kind``, ``module``, ``level``,
+            ``start_line``, ``start_col`` and a ``names`` iterable of
+            ``(name, asname | None)`` pairs.
+    """
+    if _is_str_path(conn):
+        # When given a real path we open/close the connection ourselves.
+        _ensure_imports_tables(conn)  # type: ignore[arg-type]
+
+    conn.execute("DELETE FROM import_names WHERE import_id IN ("
+                 "SELECT id FROM imports WHERE file_id = ?)",
+                 (file_id,))
+    conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+
+    if not records:
+        return
+
+    _ensure_imports_tables(conn)
+
+    row_data: list[tuple] = []
+    name_insert_params: list[tuple[int, int, str, str | None]] = []
+    for i, rec in enumerate(records):
+        kind = getattr(rec, "kind", "") or ""
+        mod = getattr(rec, "module", "") or ""
+        level = getattr(rec, "level", 0) or 0
+        sl = getattr(rec, "start_line", None)
+        sc = getattr(rec, "start_col", None)
+        row_data.append((file_id, kind, mod, level, sl, sc))
+
+    conn.executemany(
+        """INSERT INTO imports
+               (file_id, kind, module, level, start_line, start_col)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+        row_data,
+    )
+
+    # Collect import IDs inserted above, in deterministic order.
+    cursor = conn.execute(
+        "SELECT id FROM imports WHERE file_id = ? ORDER BY id ASC",
+        (file_id,),
+    )
+    imported_ids = [row[0] for row in cursor.fetchall()]
+
+    for idx, dbid in enumerate(imported_ids):
+        rec = records[idx]
+        names_iter = getattr(rec, "names", ()) or ()
+        pos = 0
+        for entry in names_iter:
+            name_val = entry[0] if isinstance(entry, (list, tuple)) and len(entry) >= 1 else entry
+            asname_val = entry[1] if isinstance(entry, (list, tuple)) and len(entry) >= 2 else None
+            name_insert_params.append((dbid, pos, name_val, asname_val))
+            pos += 1
+
+    if name_insert_params:
+        conn.executemany(
+            """INSERT INTO import_names
+                   (import_id, position, name, asname)
+                   VALUES (?, ?, ?, ?)""",
+            name_insert_params,
+        )
+
+
+def delete_imports_for_file(conn: sqlite3.Connection, file_id: int) -> None:
+    """Remove all import rows and their child names for the given *file_id*.
+
+    Args:
+        conn: Active SQLite connection.
+        file_id: Primary key of the associated file row.
+    """
+    conn.execute("DELETE FROM import_names WHERE import_id IN ("
+                 "SELECT id FROM imports WHERE file_id = ?)",
+                 (file_id,))
+    conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+
+
+def _is_str_path(obj: object) -> bool:
+    """Return True if *obj* looks like a database-path string."""
+    return isinstance(obj, str)
+
+
+def get_imports(
+    db_file: str | sqlite3.Connection,
+    *,
+    file_id: int | None = None,
+    kind: str | None = None,
+    module: str | None = None,
+    source_path: str | None = None,
+    name_filter: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Query import rows from the database, including their ``import_names``.
+
+    Args:
+        db_file: Path to a database file **or** an open :class:`sqlite3.Connection`.
+        file_id: Filter by imports.file_id (exact match).
+        kind: Filter by imports.kind (exact match).
+        module: Filter by imports.module (exact match).
+        source_path: Filter by files.rel_path (resolved via JOIN, exact match).
+        name_filter: Filter by import_names.name (exact match).
+        limit: Maximum number of import rows to return.
+
+    Returns:
+        List of dicts keyed by column name for the ``imports`` table only.
+        Each dict adds an ``import_names`` key whose value is a list of
+        ``{position, name, asname}`` dicts (ordered by position ASC).
+    """
+    close_early = _is_str_path(db_file)
+    conn = sqlite3.connect(db_file) if close_early else db_file
+    try:
+        _ensure_imports_tables(conn)
+
+        conditions: list[str] = []
+        params: list = []
+
+        if file_id is not None:
+            conditions.append("i.file_id = ?")
+            params.append(file_id)
+        if kind is not None:
+            conditions.append("LOWER(i.kind) = LOWER(?)")
+            params.append(kind)
+        if module is not None:
+            conditions.append("i.module = ?")
+            params.append(module)
+        if source_path is not None:
+            conditions.append("f.rel_path = ?")
+            params.append(source_path)
+
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        query = (
+            "SELECT i.id, i.file_id, f.rel_path as rel_path, "
+            "  i.kind, i.module, i.level, i.start_line, i.start_col"
+            " FROM imports i"
+            " JOIN files f ON i.file_id = f.id"
+            + where_clause
+            + " ORDER BY i.start_line ASC, i.start_col ASC"
+        )
+
+        if limit is not None:
+            query += f" LIMIT {int(limit)}"
+
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+        col_names = [d[0] for d in cursor.description] if cursor.description else []
+        dicts_list = [dict(zip(col_names, row)) for row in rows]
+
+        # Enrich each import row with its name child rows.
+        for d in dicts_list:
+            nid = d["id"]
+            name_cursor = conn.execute(
+                "SELECT position, name, asname FROM import_names"
+                " WHERE import_id = ? ORDER BY position ASC",
+                (nid,),
+            )
+            d["import_names"] = [
+                {"position": r[0], "name": r[1], "asname": r[2]}
+                for r in name_cursor.fetchall()
+            ]
+
+        return dicts_list
+    finally:
+        if close_early:
+            conn.close()
