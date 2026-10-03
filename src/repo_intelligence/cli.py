@@ -7,9 +7,11 @@ import sqlite3
 import click
 
 from repo_intelligence.python_ast import (
+    extract_file_imports,
     extract_file_symbols,
     _is_python_file,
 )
+from repo_intelligence.search import replace_imports_for_file
 from repo_intelligence.search import (
     create_database,
     db_path as _db_path,
@@ -74,6 +76,8 @@ def cmd_build(path, index_path, ignore_dirs):
 
     conn = sqlite3.connect(db_file)
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
+
         insert_repo_info(conn, **repo_info)
 
         # Clear all existing symbols so rebuilds don't leave stale entries.
@@ -107,12 +111,11 @@ def cmd_build(path, index_path, ignore_dirs):
                 file_id = file_id_row[0] if file_id_row else None
 
                 if file_id is not None:
-                    try:
-                        symbols = extract_file_symbols(rel_path, text_content)
-                        insert_symbols(conn, file_id, symbols)
-                    except Exception:
-                        # Malformed Python must not fail the whole build.
-                        pass
+                    symbols = extract_file_symbols(rel_path, text_content)
+                    insert_symbols(conn, file_id, symbols)
+
+                    imports_list = extract_file_imports(rel_path, text_content)
+                    replace_imports_for_file(conn, file_id, imports_list)
     finally:
         with conn:
             conn.commit()
