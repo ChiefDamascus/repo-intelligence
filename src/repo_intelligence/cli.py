@@ -16,6 +16,7 @@ from repo_intelligence.search import (
     create_database,
     db_path as _db_path,
     get_file_list,
+    get_imports,
     get_stats,
     get_symbols,
     insert_file_metadata,
@@ -323,6 +324,119 @@ def cmd_symbols(db_file, name_filter, qname_filter, kind_filter, file_filter, li
             parts_out.append(line_display)
             click.echo("  " + " ".join(p for p in parts_out if p))
         click.echo(f"\nShowing {len(syms)} of indexed symbols.")
+
+
+def _import_statement_text(row: dict) -> str:
+    """Reconstruct a source-like import expression from a persisted import row.
+
+    This is display formatting only — it never performs module or file resolution.
+    """
+    kind = row.get("kind", "") or ""
+    module = row.get("module", "") or ""
+    level = row.get("level", 0) or 0
+    names = row.get("import_names") or []
+
+    if kind == "from_import" and (level > 0 or module):
+        prefix = "." * level + module
+        rendered = ", ".join(
+            entry["name"] + (f" as {entry['asname']}" if entry.get("asname") else "")
+            for entry in names
+        )
+        return f"from {prefix} import {rendered}"
+
+    # Plain ``import ...`` statement(s) — one name per persisted alias entry.
+    parts = []
+    for entry in names:
+        name = entry["name"] if entry.get("name") is not None else module
+        asname = entry.get("asname")
+        parts.append(name + (f" as {asname}" if asname else ""))
+    return "import " + ", ".join(parts) if parts else "import " + module
+
+
+@cli.command("imports")
+@click.option("--db-path", "db_file", default=None, help="Path to the index database file. Defaults to the external location for CWD.")
+@click.option("--file", "file_filter", default=None, help="Filter by repository-relative source file containing the import.")
+@click.option("--module", "module_filter", default=None, help="Filter by the persisted import module (exact match).")
+@click.option("--name", "name_filter", default=None, help="Filter by an imported name (exact match, not the alias).")
+@click.option("--kind", "kind_filter", default=None, help="Filter by import kind (e.g. import, from_import).")
+@click.option("--limit", "limit_val", default=100, type=int, help="Maximum number of results (default: 100).")
+@click.option("--offset", "offset_val", default=0, type=int, help="Row offset for pagination (default: 0).")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+def cmd_imports(db_file, file_filter, module_filter, name_filter, kind_filter, limit_val, offset_val, as_json):
+    """List indexed import statements from the index database (read-only query)."""
+    if db_file is None:
+        db_file = _db_path(".")
+
+    if not os.path.exists(db_file):
+        click.echo("Error: No index database found.", err=True)
+        raise SystemExit(1)
+
+    params: dict = {
+        "limit": limit_val,
+        "offset": offset_val,
+    }
+    if file_filter is not None:
+        params["source_path"] = file_filter
+    if module_filter is not None:
+        params["module"] = module_filter
+    if name_filter is not None:
+        params["name_filter"] = name_filter
+    if kind_filter is not None:
+        params["kind"] = kind_filter
+
+    try:
+        rows = get_imports(db_file, **params)
+    except sqlite3.OperationalError as e:
+        click.echo(f"Error querying imports: {e}", err=True)
+        raise SystemExit(1)
+
+    if not rows:
+        parts = []
+        if file_filter:
+            parts.append(f"file='{file_filter}'")
+        if module_filter:
+            parts.append(f"module='{module_filter}'")
+        if name_filter:
+            parts.append(f"name='{name_filter}'")
+        if kind_filter:
+            parts.append(f"kind='{kind_filter}'")
+        where_str = f" ({', '.join(parts)})" if parts else ""
+        click.echo("No imports found" + where_str + ".")
+    elif as_json:
+        payload = []
+        for row in rows:
+            payload.append({
+                "id": row.get("id"),
+                "file_id": row.get("file_id"),
+                "source_file": row.get("rel_path"),
+                "kind": row.get("kind"),
+                "module": row.get("module"),
+                "level": row.get("level"),
+                "imported_names": [
+                    {
+                        "position": entry.get("position"),
+                        "name": entry.get("name"),
+                        "asname": entry.get("asname"),
+                    }
+                    for entry in row.get("import_names", [])
+                ],
+                "start_line": row.get("start_line"),
+                "start_col": row.get("start_col"),
+            })
+        _print_json(payload)
+    else:
+        for row in rows:
+            stmt = _import_statement_text(row)
+            rp = row.get("rel_path", "")
+            line = row.get("start_line")
+            col = row.get("start_col")
+            rp_display = "/" + rp.replace(os.sep, "/") if rp else ""
+            loc = f" ({rp_display}:{line}"
+            if col is not None:
+                loc += f", col {col}"
+            loc += ")" if rp_display else ""
+            click.echo(f"  {stmt}{loc}")
+        click.echo(f"\nShowing {len(rows)} of indexed import statements.")
 
 
 if __name__ == "__main__":

@@ -750,6 +750,7 @@ def get_imports(
     source_path: str | None = None,
     name_filter: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict]:
     """Query import rows from the database, including their ``import_names``.
 
@@ -759,8 +760,14 @@ def get_imports(
         kind: Filter by imports.kind (exact match).
         module: Filter by imports.module (exact match).
         source_path: Filter by files.rel_path (resolved via JOIN, exact match).
-        name_filter: Filter by import_names.name (exact match).
+        name_filter: Filter by import_names.name (exact match; matched against the
+            imported name, not the alias). Implemented as a subquery so an import
+            statement with several matching names returns exactly once.
         limit: Maximum number of import rows to return.
+        offset: Row offset for pagination (default 0).
+
+    Results are ordered deterministically by the source file's repository-relative
+    path, then start_line, start_col, then imports.id as a total-order tie-breaker.
 
     Returns:
         List of dicts keyed by column name for the ``imports`` table only.
@@ -787,6 +794,15 @@ def get_imports(
         if source_path is not None:
             conditions.append("f.rel_path = ?")
             params.append(source_path)
+        if name_filter is not None:
+            # Subquery (not a JOIN) so a multi-name import statement whose
+            # statement has several matching names is still returned once.
+            conditions.append(
+                "i.id IN ("
+                "SELECT import_id FROM import_names"
+                " WHERE import_names.name = ?)"
+            )
+            params.append(name_filter)
 
         where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -796,11 +812,13 @@ def get_imports(
             " FROM imports i"
             " JOIN files f ON i.file_id = f.id"
             + where_clause
-            + " ORDER BY i.start_line ASC, i.start_col ASC"
+            + " ORDER BY f.rel_path ASC, i.start_line ASC, i.start_col ASC, i.id ASC"
         )
 
         if limit is not None:
             query += f" LIMIT {int(limit)}"
+        if offset > 0:
+            query += f" OFFSET {int(offset)}"
 
         cursor = conn.execute(query, params)
         rows = cursor.fetchall()
