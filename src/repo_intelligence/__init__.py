@@ -1,6 +1,16 @@
 """Repository Intelligence - scanning, indexing, and semantic search for codebases."""
 
 from repo_intelligence.scanner import scan_repo
+from repo_intelligence.module_inventory import (
+    ModuleCandidate,
+    PackageRoot,
+    build_inventory_from_db,
+    build_module_inventory,
+    candidates_for_file,
+    candidates_for_name,
+    is_ambiguous,
+    load_file_records_from_db,
+)
 from repo_intelligence.search import (
     create_database,
     db_path,
@@ -28,4 +38,13 @@ __all__ = [
     "delete_imports_for_file",
     "get_imports",
     "replace_imports_for_file",
+    # Phase 2C-1: deterministic static module inventory
+    "ModuleCandidate",
+    "PackageRoot",
+    "build_module_inventory",
+    "build_inventory_from_db",
+    "candidates_for_file",
+    "candidates_for_name",
+    "is_ambiguous",
+    "load_file_records_from_db",
 ]
