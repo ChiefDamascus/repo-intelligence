@@ -1,8 +1,8 @@
 # Phase 2C-2B — Read-only Database-backed Absolute Import Resolution
 
-**Status:** DRAFT — ARCHITECTURE REVIEW REQUIRED  
+**Status:** APPROVED — IMPLEMENTATION AUTHORIZED  
 **Prepared:** 2026-10-14  
-**Implementation authorization:** **NONE**  
+**Implementation authorization:** **APPROVED for Phase 2C-2B within checklist A–E; no implementation completion claimed**  
 **Prerequisite:** Phase 2C-2A merged into `main` (PR #1, 2026-10-14)  
 **Related roadmap:** [`PLAN.md`](PLAN.md)
 
@@ -31,12 +31,12 @@ Provide a narrow, deterministic, **read-only** adapter from an *existing* repo-i
 
 **Important hazard:** Existing `search.get_imports()` first calls `_ensure_imports_tables()`, which contains DDL (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`). Do not call this from a strict read-only adapter and do not patch frozen `search.py` in 2C-2B. Write a small SELECT-only loader confined to the new adapter.
 
-## 3. Proposed minimal API (approval question A)
+## 3. Approved minimal API (A)
 
 Add a **new** module (provisional filename `src/repo_intelligence/db_absolute_resolution.py`) exposing one function:
 
 ```python
-# CONTRACT PROPOSAL ONLY — NOT IMPLEMENTATION
+# APPROVED API CONTRACT — NOT IMPLEMENTATION
 
 def resolve_absolute_imports_from_db(
     db_path: str,
@@ -53,9 +53,9 @@ def resolve_absolute_imports_from_db(
 - Return: immutable tuple of the **existing** `Resolution` objects. They retain original `ImportRecord`s, statuses and all matching candidates. **Do not** create a redundant resolution schema or expose database row IDs as public semantic identity.
 - No pagination, streaming, prefiltered inventory, caching or configurable root-precedence in the first iteration. Later query interface/pagination are Phase 2C-4 topics.
 
-**Alternative requiring a decision:** A connection-taking API may be useful later, but it complicates snapshot ownership and the strictly read-only guarantee for arbitrary caller-owned connections. Recommendation: accept only a database **path** in this milestone; use a single internally owned read-only connection.
+**Approved decision (A):** Accept only a database **path** in this milestone and use a single internally owned read-only connection. A connection-taking API may be considered later, but it complicates snapshot ownership and the strictly read-only guarantee for arbitrary caller-owned connections.
 
-## 4. Proposed read pipeline and transaction (approval question B)
+## 4. Approved read pipeline and transaction (B)
 
 ```text
 existing index.db (path)
@@ -94,9 +94,9 @@ Requirements:
 7. Release the connection/transaction on success or exception. Never commit changes, create any schema object, or write a derived result.
 8. Do not use SQLite `immutable=1` to bypass journal logic: it can ignore concurrent changes and undermine snapshot assumptions. SQLite may use normal read-side journal/WAL coordination, which is not permission to write application/index data.
 
-## 5. Exact data-mapping contract (approval question C)
+## 5. Approved data-mapping contract (C)
 
-Use SELECT-only queries with parameterized filters and an explicit deterministic order. Proposed statement projection:
+Use SELECT-only queries with parameterized filters and an explicit deterministic order. Reference statement projection (or the equivalent permitted by the contract below):
 
 ```sql
 SELECT i.id, f.rel_path, i.kind, i.module, i.level,
@@ -125,9 +125,9 @@ names       <- tuple((import_names.name, import_names.asname)
 
 There is deliberately **no** `source_path` column in the `imports` table. It comes from `files.rel_path` via the join. Do not reconstruct statement text or infer names from module strings; imported name aliases remain intact. Source-order of *multi-name* `from ... import ...` is retained via `position`.
 
-**Schema/corruption policy — proposal:** Validate required tables and columns with read-only `sqlite_master` and/or `PRAGMA table_info`; use read-only integrity checks or explicit orphan-detection SELECTs rather than relying on an INNER JOIN that would silently drop orphaned import records. Fail closed with a clear exception if an index is missing tables/required columns, contains orphaned rows, duplicate/invalid name positions, or cannot be losslessly reconstructed. Do not run migration/repair; do not silently drop records or transform malformed rows into fictitious valid imports. Distinguish storage errors from the pure resolver's own defined `UNSUPPORTED`/`NOT_ATTEMPTED` outcomes for synthetically malformed-but-representable `ImportRecord` values.
+**Approved schema/corruption policy:** Validate required tables and columns with read-only `sqlite_master` and/or `PRAGMA table_info`; use read-only integrity checks or explicit orphan-detection SELECTs rather than relying on an INNER JOIN that would silently drop orphaned import records. Fail closed with a clear exception if an index is missing tables/required columns, contains orphaned rows, duplicate/invalid name positions, or cannot be losslessly reconstructed. Do not run migration/repair; do not silently drop records or transform malformed rows into fictitious valid imports. Distinguish storage errors from the pure resolver's own defined `UNSUPPORTED`/`NOT_ATTEMPTED` outcomes for synthetically malformed-but-representable `ImportRecord` values.
 
-**Open point:** Persisted `start_line`/`start_col` are nullable in SQLite even though `ImportRecord` types are `int`. Recommend failing closed if required coordinates are absent/invalid; review legacy rows before fixing this contract.
+**Approved fail-closed coordinate policy:** Persisted `start_line`/`start_col` are nullable in SQLite even though `ImportRecord` types are `int`. Reject absent/invalid required coordinates; review legacy rows during implementation rather than weakening or silently repairing this contract.
 
 ## 6. Semantic pass-through (no new resolver policy)
 
@@ -144,7 +144,7 @@ There is deliberately **no** `source_path` column in the `imports` table. It com
 
 The adapter does **not** retry submodule candidates if the explicit target has no match, resolve relative levels, parse source, infer namespace precedence, or modify reason/status fields.
 
-## 7. Required acceptance tests (approval question D)
+## 7. Required acceptance tests (D)
 
 **Read-only invariant:**
 
@@ -175,9 +175,9 @@ The adapter does **not** retry submodule candidates if the explicit target has n
 - Run existing Phase 2B, 2C-1, 2C-2A tests and the entire suite; review independently with Codex after OpenHands implementation. Report exact commands and counts. No test execution is claimed in this architecture document.
 - Exercise the adapter against a clean index of the repository and, if desired, an index of `hermes-satisfactory` **without changing that repository**.
 
-## 8. Expected implementation footprint *after* approval only
+## 8. Authorized implementation footprint (E)
 
-**Likely additions:**
+**Expected additions:**
 
 - `src/repo_intelligence/db_absolute_resolution.py` — tiny SELECT-only adapter + result assembly.
 - `tests/test_db_absolute_resolution.py` — focused SQLite fixtures, failure-mode tests and frozen-contract regression checks.
@@ -188,7 +188,7 @@ If these constraints cannot be satisfied by additions alone, return for architec
 
 ## 9. Architecture approval checklist
 
-All of the following need explicit acceptance:
+All of the following decisions were approved on 2026-10-14:
 
 - [x] **A — API:** one new path-based function, explicit roots, optional exact source filter, returns tuple of frozen `Resolution` objects (no new public row-ID identity).
 - [x] **B — Read model:** owned URI `mode=ro` connection, `query_only`, one read snapshot; reuse frozen Phase 2C-1 builder on the same connection.
