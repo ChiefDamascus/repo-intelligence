@@ -190,10 +190,10 @@ If these constraints cannot be satisfied by additions alone, return for architec
 
 All of the following need explicit acceptance:
 
-- [ ] **A — API:** one new path-based function, explicit roots, optional exact source filter, returns tuple of frozen `Resolution` objects (no new public row-ID identity).
-- [ ] **B — Read model:** owned URI `mode=ro` connection, `query_only`, one read snapshot; reuse frozen Phase 2C-1 builder on the same connection.
-- [ ] **C — SQLite mapping:** SELECT-only import and imported-name loader; strict schema and malformed-row policy; no `get_imports()` DDL helper.
-- [ ] **D — Acceptance:** determinism, no writes, snapshot consistency, missing/corrupt database, candidate evidence, and full regression tests.
-- [ ] **E — Scope:** new adapter/tests only; no frozen code/DB schema/CLI updates and no relative/imported-name resolution.
+- [x] **A — API:** one new path-based function, explicit roots, optional exact source filter, returns tuple of frozen `Resolution` objects (no new public row-ID identity).
+- [x] **B — Read model:** owned URI `mode=ro` connection, `query_only`, one read snapshot; reuse frozen Phase 2C-1 builder on the same connection.
+- [x] **C — SQLite mapping:** SELECT-only import and imported-name loader; strict schema and malformed-row policy; no `get_imports()` DDL helper.
+- [x] **D — Acceptance:** determinism, no writes, snapshot consistency, missing/corrupt database, candidate evidence, and full regression tests.
+- [x] **E — Scope:** new adapter/tests only; no frozen code/DB schema/CLI updates and no relative/imported-name resolution.
 
-**Decision: PENDING.** No implementation prompt or code changes until the user approves this architecture.
+**Decision: APPROVED.**
