@@ -932,6 +932,44 @@ def test_28_conflicting_duplicates_raise_value_error():
         resolve_absolute_import(rec_a, [c1, c3])
 
 
+def test_28b_evidence_only_conflict_raises_value_error():
+    # F3 (P2): candidates sharing a structural identity that differ ONLY
+    # on their evidence tuple must be rejected as a deterministic
+    # conflict, independent of input order.  ``evidence`` is a
+    # substantive attribute of the resolver's identity contract, so an
+    # evidence-only divergence is never silently consolidated.
+    #
+    # Genuine candidate constructed via the frozen Phase 2C-1 public
+    # API.  The twin is produced by ``dataclasses.replace`` so that
+    # every substantive field is byte-for-byte identical except the
+    # evidence tuple.
+    original = build_module_inventory([rec("a.py")], ["."])[0]
+    modified = dataclasses.replace(
+        original,
+        evidence=original.evidence + ("f3-evidence-drift",),
+    )
+
+    # Invariant: only the evidence tuple differs.
+    assert original.root.canonical == modified.root.canonical
+    assert original.name_components == modified.name_components
+    assert original.file_path == modified.file_path
+    assert original.qualified_name == modified.qualified_name
+    assert original.file_kind == modified.file_kind
+    assert original.directory_kind == modified.directory_kind
+    assert original.component_supported == modified.component_supported
+    assert original.name_supported == modified.name_supported
+    assert original.evidence != modified.evidence
+    assert modified.evidence
+
+    rec_a = records_for_source("import a")[0]
+    # Input-order independent: evidence-only conflict is rejected for
+    # both orderings.
+    with pytest.raises(ValueError):
+        resolve_absolute_import(rec_a, [original, modified])
+    with pytest.raises(ValueError):
+        resolve_absolute_import(rec_a, [modified, original])
+
+
 # ---------------------------------------------------------------------------
 # 29. F4 both-flags supported gate
 # ---------------------------------------------------------------------------
