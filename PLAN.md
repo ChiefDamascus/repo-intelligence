@@ -4,7 +4,7 @@
 **Last updated:** 2026-10-14  
 **Project:** `repo-intelligence`  
 **Authoritative implementation repository:** `ChiefDamascus/repo-intelligence`  
-**Active planning milestone:** Phase 2C-2B — read-only database-backed absolute import resolution (**architecture approval pending**)  
+**Active implementation milestone:** Phase 2C-2B — read-only database-backed absolute import resolution (**architecture approved; implementation authorized, not yet verified**)  
 
 > **Maintenance requirement:** Update this file whenever a phase or milestone changes status, scope, acceptance decision, merge state, or blocking dependency. Changes to this file should accompany the corresponding implementation or review milestone, not be deferred to a later documentation cleanup. Do not mark a milestone frozen, accepted, or merged without recorded evidence.
 
@@ -29,6 +29,7 @@ Development principles:
 | **FROZEN** | Implemented, accepted, and treated as a stable contract. No modifications without an explicitly approved correction milestone. |
 | **MERGED / COMPLETE** | Implementation accepted and merged, with remaining integration/freeze terminology recorded separately if applicable. |
 | **COMPLETE (DESIGN)** | Planning/reconnaissance milestone finished; no additional implementation is implied. |
+| **ARCHITECTURE APPROVED — IMPLEMENTATION AUTHORIZED** | Approved implementation scope and acceptance criteria; implementation, tests, review and merge remain to be completed and verified. |
 | **PLANNING — APPROVAL PENDING** | Architecture discussion or document only. Coding not authorized. |
 | **PENDING — NOT AUTHORIZED** | Planned work that has not been approved for implementation. |
 | **PROPOSED** | A roadmap suggestion; number, scope, and sequence may change. |
@@ -47,7 +48,7 @@ Development principles:
 | **2C-0 / 2C-0A / 2C-0B** | Import-resolution reconnaissance and corrected architecture | **COMPLETE (DESIGN)** | Documented in the prior project roadmap. |
 | **2C-1** | Deterministic Python module inventory and package-root mapping | **FROZEN** | Final R3 Codex PASS; frozen `main` base commit `039b399807a9b844e11acae35171464a5e02483a`. |
 | **2C-2A** | Pure deterministic absolute import resolver | **MERGED / COMPLETE** | [PR #1](https://github.com/ChiefDamascus/repo-intelligence/pull/1) merged 2026-10-14; source commit `7c0ab4296cf2b97ac45539e90ffdebf85279ee9b`, merge commit `d4fc71d18eff7f2d0e7f41af781df2125d7a4f22`. Final Codex review was reported PASS. |
-| **2C-2B** | Read-only database-backed absolute import adapter | **PLANNING — APPROVAL PENDING** | Review and approve `PHASE_2C_2B_ARCHITECTURE_DRAFT.md` before any implementation. |
+| **2C-2B** | Read-only database-backed absolute import adapter | **ARCHITECTURE APPROVED — IMPLEMENTATION AUTHORIZED** | [Approved architecture](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) (A–E, 2026-10-14). Next: scoped OpenHands implementation, focused and full tests, independent Codex review. |
 | **2C-3** | Relative imports and separate from-import name/submodule analysis | **PENDING — NOT AUTHORIZED** | Requires Phase 2C-2 acceptance and an independently approved scope. |
 | **2C-4** | Resolution integration, query exposure and optional CLI | **PENDING — NOT AUTHORIZED** | Requires prior resolver milestones and interface approval. |
 | **2D** | Direct local module/file dependency relationships | **PROPOSED** | Confirm design after Phase 2C acceptance. |
@@ -109,9 +110,9 @@ Development principles:
 
 **Goal:** Make the Phase 2C-2A pure resolver useful against an existing SQLite index, while enforcing database read-only behavior and leaving frozen components unchanged.
 
-**Current authorization:** Architecture and test planning **only**. No code changes.
+**Current authorization:** Architecture **approved** on 2026-10-14; implementation and testing are authorized **only within the approved scope**. Implementation has not been verified or marked complete.
 
-**Proposed boundaries (not approved):**
+**Approved implementation boundaries:**
 
 - A new, small adapter module operating on an **existing** database path and an explicit nonempty root list.
 - Database opened `mode=ro`; a single consistent read snapshot for complete file inventory, import statements and imported-name rows.
@@ -121,11 +122,11 @@ Development principles:
 - Explicit roots supplied by caller; no automatic root guessing or `sys.path`-based discovery.
 - No CLI, no new persistence format, no runtime imports, no relative-resolution expansion, and no modification to Phase 1/2A/2B/2C-1/2C-2A.
 
-**Design issue to resolve:** The existing `search.get_imports()` invokes `_ensure_imports_tables()` with `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements. It therefore does **not** meet the strict Phase 2C-2B no-DDL contract. The proposed adapter must use its **own SELECT-only loader** instead of calling that helper; **do not edit** the frozen helper as part of 2C-2B.
+**Approved design constraint:** The existing `search.get_imports()` invokes `_ensure_imports_tables()` with `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements. It therefore does **not** meet the strict Phase 2C-2B no-DDL contract. The adapter must use its **own SELECT-only loader** instead of calling that helper; **do not edit** the frozen helper as part of 2C-2B.
 
-**Approval gate:** Approve (1) public adapter API/return type, (2) consistent read snapshot/connection ownership, (3) strict schema and malformed-row behavior, (4) deterministic ordering and full inventory rules, and (5) the no-write acceptance-test matrix. Only then prepare an OpenHands implementation prompt.
+**Approval record:** On 2026-10-14, architecture decisions A–E were approved: (1) public adapter API/return type, (2) consistent read snapshot/connection ownership, (3) strict schema and malformed-row behavior, (4) deterministic ordering and full inventory rules, and (5) the no-write acceptance-test matrix. **Next gate:** scoped implementation followed by focused/full tests and independent Codex review; approval does not imply completion.
 
-See [`PHASE_2C_2B_ARCHITECTURE_DRAFT.md`](PHASE_2C_2B_ARCHITECTURE_DRAFT.md) for the proposal. This document is not an approval.
+See [`PHASE_2C_2B_ARCHITECTURE_APPROVED.md`](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) for the approved implementation contract (A–E).
 
 ## 6. Remaining Phase 2C milestones
 
@@ -208,6 +209,7 @@ Next prerequisite: ...
 
 ## 10. Decision and change log
 
+- **2026-10-14 — 2C-2B ARCHITECTURE APPROVED / IMPLEMENTATION AUTHORIZED:** [Architecture approval](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) records accepted decisions A–E. Implementation is authorized within the documented scope; tests, independent review, and merge are still pending.
 - **2026-10-14 — 2C-2A MERGED / COMPLETE:** GitHub [PR #1](https://github.com/ChiefDamascus/repo-intelligence/pull/1) is merged (`d4fc71d18eff7f2d0e7f41af781df2125d7a4f22`). Pure resolver added without touching frozen components.
 - **2026-10-14 — 2C-2B PLANNING:** Began read-only database-backed adapter architecture; **no implementation authorized**. Strict read-only constraint rules out direct reuse of the `get_imports()` helper because it contains schema-ensuring DDL.
 - **2026-10-11 — 2C-1 FROZEN:** Final R3 Codex review reported PASS; frozen base commit later verified as `039b399807a9b844e11acae35171464a5e02483a`.
