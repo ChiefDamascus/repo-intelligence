@@ -137,19 +137,62 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _validate_import_rows(rows: list[tuple]) -> None:
-    """Fail closed on absent/invalid required fields.
+def _name_sort_key(name: str, asname: str | None) -> tuple:
+    """Comparable key for one imported-name ``(name, asname)`` pair.
 
-    Checks are deterministic and independent of row order.  ``start_line``
-    and ``start_col`` are nullable in the persisted schema even though
-    the frozen :class:`ImportRecord` contract requires ``int``; absent or
-    non-positive coordinates are rejected rather than repaired.
+    ``asname`` is legitimately ``None`` (no alias) or a ``str``; a raw
+    tuple comparison of ``('a', None)`` against ``('a', 'alias')`` would
+    raise ``TypeError`` because ``None`` is not ordering-comparable with
+    ``str``.  The key tags the alias with a boolean presence flag so that
+    the ordering is a **total order** over the whole domain: the absent
+    alias sorts deterministically (before any present alias) and present
+    aliases compare by their string value.  This key is used only for
+    ordering; the original ``names`` tuple on the record is never
+    rewritten.
+    """
+    return (name, (0 if asname is None else 1, asname))
+
+
+def _record_order_key(record: ImportRecord) -> tuple:
+    """Deterministic total-order key for a reconstructed record.
+
+    ``record.names`` (a tuple of ``(str, str | None)`` pairs) is mapped
+    through :func:`_name_sort_key` so that missing aliases ``str | None``
+    never meet in a raw comparison.  The key matches the approved
+    ordering invariants (``source_path, start_line, start_col, kind,
+    module, level, names``) and deliberately excludes any SQLite row ID;
+    equal records may repeat as equal keys.
+    """
+    return (
+        record.source_path,
+        record.start_line,
+        record.start_col,
+        record.kind,
+        record.module,
+        record.level,
+        tuple(
+            _name_sort_key(name, asname) for name, asname in record.names
+        ),
+    )
+
+
+def _validate_import_rows(rows: list[tuple]) -> None:
+    """Fail closed on absent/invalid required *storage* fields only.
+
+    Checks are deterministic and independent of row order.  Only values
+    the frozen :class:`ImportRecord` cannot structurally represent are
+    rejected here: non-text ``kind``/``module``, non-integer ``level``,
+    and absent/invalid ``start_line``/``start_col``.  A *representable*
+    unknown ``kind`` string (e.g. ``bad_kind``) is deliberately NOT enum-
+    validated at the adapter: the frozen resolver interprets it and
+    returns its defined ``NOT_ATTEMPTED`` / ``invalid_record_kind``
+    outcome, and in-memory vs database-backed equality is preserved.
     """
     for i, row in enumerate(rows):
         (_id, _rel_path, kind, module, level, start_line, start_col) = row
-        if not isinstance(kind, str) or kind not in ("import", "from_import"):
+        if not isinstance(kind, str):
             raise AdapterError(
-                f"imports row {i + 1} has invalid kind {kind!r}"
+                f"imports row {i + 1} has non-text kind {kind!r}"
             )
         if not isinstance(module, str):
             raise AdapterError(
@@ -383,13 +426,10 @@ def resolve_absolute_imports_from_db(
                 )
             )
 
-        # Row-ID-free deterministic ordering; equal records may repeat.
-        records.sort(
-            key=lambda r: (
-                r.source_path, r.start_line, r.start_col,
-                r.kind, r.module, r.level, r.names,
-            )
-        )
+        # Row-ID-free deterministic total-order ordering; equal records
+        # may repeat.  The key maps optional aliases to a total order
+        # (see _record_order_key) and never consults SQLite row IDs.
+        records.sort(key=_record_order_key)
 
         # --- Frozen resolver, unchanged (semantic pass-through) --------
         return tuple(resolve_absolute_import(rec, inventory) for rec in records)
