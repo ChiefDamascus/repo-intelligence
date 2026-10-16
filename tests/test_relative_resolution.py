@@ -1311,6 +1311,458 @@ class TestCategory19_ImmutabilityPurity:
 
 
 # ---------------------------------------------------------------------------
+# Category 21 -- Codex R1: lossless guard, malformed components, malformed
+#                structural containers (Phase 2C-3A post-Codex corrections)
+# ---------------------------------------------------------------------------
+
+
+def _source_mc(name_components, **kw):
+    """Directly construct a source-context :class:`ModuleCandidate`
+    (not via the shared ``MC`` fixture helper, per the Codex mandate) so
+    that malformed structural values can be exercised explicitly.  Any
+    frozen-dataclass field may be overridden via *kw*."""
+    overrides = dict(
+        file_path="p/m.py",
+        root=PackageRoot(canonical="R", original="R"),
+        qualified_name=".".join(map(str, name_components))
+        if isinstance(name_components, (list, tuple)) else "p.m",
+        name_components=name_components,
+        file_kind="ordinary_module",
+        directory_kind="regular_package",
+        component_supported=False,
+        name_supported=False,
+        evidence=("synthetic",),
+    )
+    overrides.update(kw)
+    return ModuleCandidate(**overrides)
+
+
+class TestCategory21_R1MalformedStructures:
+    def test_int_component_in_derived_target_is_lossless_unsafe(self):
+        # The exact Codex R1 counterexample: a tuple holding a non-string
+        # int component.  Before the fix, ``".".join`` raised an incidental
+        # TypeError; the R2 contract classifies this as UNSUPPORTED /
+        # REL_LOSSLESS_UNSAFE without raising.
+        src = _source_mc((1, "m"))
+        r = rec(module="", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (src,))
+        assert res.issue is None
+        assert len(res.contexts) == 1
+        c = res.contexts[0]
+        assert c.status == UNSUPPORTED
+        assert c.reason == REL_LOSSLESS_UNSAFE
+        assert c.lossless is False
+        # The exact derived target tuple is preserved verbatim (no
+        # coercion of the int to a string).
+        assert c.target_components == (1,)
+        assert c.supported_candidates == ()
+        assert c.unsupported_candidates == ()
+
+    def test_int_component_does_not_invoke_frozen_resolver(self, monkeypatch):
+        # Explicit proof: an unsafe derived target must NEVER call the
+        # frozen absolute resolver.
+        blocker = {"called": False}
+
+        def fail(*a, **k):
+            blocker["called"] = True
+            raise AssertionError("frozen resolver must not be called")
+
+        import repo_intelligence.relative_resolution as rel_mod
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", fail)
+        src = _source_mc((1, "m"))
+        r = rec(module="", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (src,))
+        assert blocker["called"] is False
+        assert res.contexts[0].reason == REL_LOSSLESS_UNSAFE
+
+    def test_list_valued_name_components_raises_intentional_type_error(self):
+        # A list-valued (non-tuple) name_components violates the frozen
+        # contract and must be rejected by a deliberate, clearly explained
+        # TypeError BEFORE the frozen sort/hash code is reached.
+        src = _source_mc(["p", "m"])
+        r = rec(module="", level=1, source_path="p/m.py")
+        with pytest.raises(TypeError, match="name_components must be a tuple"):
+            resolve_relative_import(r, (src,))
+
+    def test_unhashable_nested_component_raises_intentional_type_error(self):
+        # A hashable tuple that itself contains an unhashable nested
+        # value must be rejected by a deliberate, clearly explained
+        # TypeError BEFORE hash-based deduplication.
+        src = _source_mc((["p"], "m"))
+        r = rec(module="", level=1, source_path="p/m.py")
+        with pytest.raises(
+            TypeError, match="contains an unhashable component"
+        ):
+            resolve_relative_import(r, (src,))
+
+    def test_non_string_component_not_coerced_via_replace(self):
+        # Uses dataclasses.replace to build a variant of a valid candidate
+        # (not the ``MC`` fixture helper), asserting the resolver classifies
+        # the non-string derived component as unsafe and never rewrites it.
+        # We use a two-element name_components so that base derivation
+        # (``name_components[:-1]`` for an ordinary module) leaves a
+        # nonempty base that still holds the non-string component in the
+        # derived target.
+        valid = _source_mc(("p", "m"), file_kind="ordinary_module")
+        bad = dataclasses.replace(valid, name_components=(99, "m"))
+        r = rec(module="", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (bad,))
+        c = res.contexts[0]
+        assert c.status == UNSUPPORTED
+        assert c.reason == REL_LOSSLESS_UNSAFE
+        assert c.target_components == (99,)
+        assert c.supported_candidates == ()
+        assert c.unsupported_candidates == ()
+
+    def test_literal_dot_collision_protection_still_works(self):
+        # A source with a literal-dot component in a retained ancestor
+        # (base retains it; suffix is non-empty) must still be
+        # classified UNSUPPORTED / REL_LOSSLESS_UNSAFE after the R1
+        # guard change - the round-trip split check still fires for a
+        # string-only target whose dotted spelling re-splits to a
+        # different tuple.  (R1 only added the earlier type guard; the
+        # existing split-based check is what fires here.)
+        #   source: a/b.c/inner.py  -> base=("a","b.c"), level=1
+        #   kept=("a","b.c"), suffix=("x",) -> target=("a","b.c","x")
+        #   dotted "a.b.c.x" re-splits to ("a","b","c","x") != target
+        #   -> UNSUPPORTED / REL_LOSSLESS_UNSAFE, empty partitions.
+        src = _source_mc(("a", "b.c", "inner"),
+                         file_path="a/b.c/inner.py",
+                         component_supported=False, name_supported=False)
+        # A decoy that WOULD be falsely matched if we joined first and
+        # delegated; must NOT appear on an unsafe target.
+        decoy = _source_mc(("a", "b", "c", "x"),
+                           file_path="a/b/c/x.py")
+        r = rec(module="x", level=1, source_path="a/b.c/inner.py")
+        res = resolve_relative_import(r, (src, decoy))
+        assert res.issue is None
+        c = res.contexts[0]
+        assert c.status == UNSUPPORTED
+        assert c.reason == REL_LOSSLESS_UNSAFE
+        assert c.lossless is False
+        assert c.target_components == ("a", "b.c", "x")
+        assert c.supported_candidates == ()
+        assert c.unsupported_candidates == ()
+        # The decoy must NOT be surfaced on an unsafe target.
+        for cand in (c.supported_candidates + c.unsupported_candidates):
+            assert cand.file_path != "a/b/c/x.py"
+
+    def test_valid_traversal_removes_literal_dot_ancestor_delegates_safely(self):
+        # A source with a literal-dot component in a *removed* ancestor
+        # (traversal strips it; kept/suffix are all plain strings) must
+        # still delegate normally - the R1 type guard must let it through
+        # because the *derived target* is dotted-safe.
+        #   source: q/r-1/s.py  (hyphen ancestor "r-1", same shape as
+        #   category 09's working test pattern)
+        #   base=("q","r-1"), level=2 -> kept=("q",), suffix=()
+        #   target=("q",) - dotted "q" re-splits to ("q",) -> safe
+        #   -> delegate; a q/__init__.py candidate exists -> RESOLVED.
+        src = ModuleCandidate(
+            file_path="q/r-1/s.py",
+            root=PackageRoot(canonical="R", original="R"),
+            qualified_name="q.r-1.s",
+            name_components=("q", "r-1", "s"),
+            file_kind="ordinary_module",
+            directory_kind="regular_package",
+            component_supported=False,
+            name_supported=False,
+            evidence=("synthetic",),
+        )
+        q_init = ModuleCandidate(
+            file_path="q/__init__.py",
+            root=PackageRoot(canonical="R", original="R"),
+            qualified_name="q",
+            name_components=("q",),
+            file_kind="package_initializer",
+            directory_kind="regular_package",
+            component_supported=True,
+            name_supported=True,
+            evidence=("synthetic",),
+        )
+        r = rec(module="", level=2, source_path="q/r-1/s.py")
+        res = resolve_relative_import(r, (src, q_init))
+        c = res.contexts[0]
+        assert c.status == RESOLVED
+        assert c.lossless is True
+        assert c.target_components == ("q",)
+        assert [x.file_path for x in c.supported_candidates] == ["q/__init__.py"]
+
+
+# ---------------------------------------------------------------------------
+# Category 22 -- Codex R2: __all__ / wildcard-import correctness
+# ---------------------------------------------------------------------------
+
+
+class TestCategory22_Exports:
+    def test_all_entries_are_existing_module_attributes(self):
+        import repo_intelligence.relative_resolution as m
+        missing = [n for n in m.__all__ if not hasattr(m, n)]
+        assert missing == [], f"__all__ references missing attributes: {missing}"
+
+    def test_wildcard_import_succeeds_in_isolated_namespace(self):
+        # Uses exec in an isolated namespace (per Codex mandate) rather
+        # than polluting this test module's scope.
+        ns = {}
+        exec(
+            "from repo_intelligence.relative_resolution import *",
+            ns,
+        )
+        # All 9 REL_* constant names, both frozen result models, and the
+        # public resolver function are present.
+        for name in (
+            "REL_INVALID_KIND",
+            "REL_INVALID_LEVEL",
+            "REL_NOT_RELATIVE",
+            "REL_MALFORMED_SUFFIX",
+            "REL_INVALID_SOURCE_PATH",
+            "REL_MISSING_SOURCE_CONTEXT",
+            "REL_NO_PACKAGE_CONTEXT",
+            "REL_TRAVERSAL_BEYOND_TOP",
+            "REL_LOSSLESS_UNSAFE",
+            "ContextResolution",
+            "RelativeResolution",
+            "resolve_relative_import",
+        ):
+            assert name in ns, f"wildcard import missed {name}"
+
+    def test_all_nine_rel_constants_exported(self):
+        import repo_intelligence.relative_resolution as m
+        rel_names = {n for n in m.__all__ if n.startswith("REL_")}
+        assert len(rel_names) == 9
+        for name in rel_names:
+            assert hasattr(m, name)
+            assert isinstance(getattr(m, name), str)
+
+    def test_public_models_and_resolver_exported(self):
+        import repo_intelligence.relative_resolution as m
+        for name in ("ContextResolution", "RelativeResolution",
+                     "resolve_relative_import"):
+            assert name in m.__all__
+            assert callable(getattr(m, name)) or \
+                   isinstance(getattr(m, name), type)
+
+    def test_reason_constant_values_preserved(self):
+        # Codex R2: __all__ uses attribute NAMES, but the string VALUES
+        # of every reason code must remain the approved canonical strings
+        # exactly.
+        import repo_intelligence.relative_resolution as m
+        expected = {
+            "REL_INVALID_KIND": "relative_invalid_kind",
+            "REL_INVALID_LEVEL": "relative_invalid_level",
+            "REL_NOT_RELATIVE": "relative_not_relative",
+            "REL_MALFORMED_SUFFIX": "relative_malformed_suffix",
+            "REL_INVALID_SOURCE_PATH": "relative_invalid_source_path",
+            "REL_MISSING_SOURCE_CONTEXT": "relative_missing_source_context",
+            "REL_NO_PACKAGE_CONTEXT": "relative_no_package_context",
+            "REL_TRAVERSAL_BEYOND_TOP": "relative_traversal_beyond_top_level",
+            "REL_LOSSLESS_UNSAFE": "relative_lossless_unsafe",
+        }
+        for name, value in expected.items():
+            assert getattr(m, name) == value
+
+
+# ---------------------------------------------------------------------------
+# Category 23 -- Codex P3: targeted test hardening
+# ---------------------------------------------------------------------------
+
+
+class TestCategory23_P3Hardening:
+    def test_one_shot_generator_inventory_is_consumed_once(self):
+        # The resolver materializes the inventory via ``tuple(...)``
+        # without re-iterating it.  A one-shot generator must be accepted
+        # and consumed exactly once.
+        call_count = {"n": 0}
+
+        def gen():
+            for c in (PKG_INIT, PKG_HELPER):
+                call_count["n"] += 1
+                yield c
+
+        r = rec(module="", level=1, source_path="pkg/__init__.py")
+        gen_iter = gen()
+        res = resolve_relative_import(r, gen_iter)
+        assert res.issue is None
+        assert len(res.contexts) == 1
+        assert call_count["n"] == 2
+
+    def test_delegated_importrecord_fields_preserved(self, monkeypatch):
+        # Explicit assertion of the delegated ImportRecord:
+        # kind, level, module, names, aliases, source_path, and
+        # coordinates.  The spy records the delegated record and then
+        # forwards to the real frozen resolver so the test stays
+        # deterministic.
+        captured = {}
+        import repo_intelligence.relative_resolution as rel_mod
+        real = rel_mod.resolve_absolute_import
+
+        def spy(record, inventory):
+            captured["record"] = record
+            captured["inventory"] = inventory
+            return real(record, inventory)
+
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", spy)
+
+        src = MC(file_path="pkg/mod.py", name_components=("pkg", "mod"))
+        target = MC(file_path="pkg/tg.py", name_components=("pkg", "tg"))
+        original = ImportRecord(
+            kind="from_import",
+            module="tg",
+            names=(("tg", "tg_alias"), ("*", None)),
+            level=1,
+            source_path="pkg/mod.py",
+            start_line=42,
+            start_col=7,
+        )
+        res = resolve_relative_import(original, (src, target))
+        assert res.contexts[0].status == RESOLVED
+
+        d = captured["record"]
+        assert d.kind == "from_import"
+        assert d.level == 0
+        # module must be the dotted absolute target.
+        assert d.module == "pkg.tg"
+        # names (with aliases + wildcard) must be passed through verbatim.
+        assert d.names == original.names
+        assert d.source_path == "pkg/mod.py"
+        assert d.start_line == 42
+        assert d.start_col == 7
+        # The original record was NOT mutated and is preserved by identity.
+        assert res.record is original
+        assert original.level == 1
+        assert original.module == "tg"
+        # The delegated record is never exposed on the result.
+        assert not hasattr(res, "derived_record")
+        assert not hasattr(res, "absolute_record")
+
+    def test_unsafe_target_never_calls_frozen_resolver(self, monkeypatch):
+        # Independent proof that an unsafe (non-string component) derived
+        # target NEVER invokes the frozen absolute resolver, and that the
+        # result is classified as UNSUPPORTED / REL_LOSSLESS_UNSAFE.
+        import repo_intelligence.relative_resolution as rel_mod
+        monkeypatch.setattr(
+            rel_mod, "resolve_absolute_import",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("frozen resolver must not be invoked"))
+        )
+        src = _source_mc((1, "m"))
+        r = rec(module="", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (src,))
+        assert res.contexts[0].status == UNSUPPORTED
+        assert res.contexts[0].reason == REL_LOSSLESS_UNSAFE
+        assert res.contexts[0].lossless is False
+        assert res.contexts[0].supported_candidates == ()
+        assert res.contexts[0].unsupported_candidates == ()
+
+    def test_overlapping_roots_package_initializer_contexts(self):
+        # Category 12 currently covers overlapping roots with ordinary
+        # modules.  This test adds the package-initializer case
+        # (source is a __init__.py) where two roots yield two distinct
+        # initializer contexts and no ambiguous target is available.
+        a_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
+                    file_kind="package_initializer", root="R1", root_orig="R1")
+        b_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
+                    file_kind="package_initializer", root="R2", root_orig="R2")
+        r = rec(module="", level=1, source_path="pkg/__init__.py")
+        res = resolve_relative_import(r, (a_init, b_init))
+        assert len(res.contexts) == 2
+        roots = sorted(c.source_candidate.root.canonical for c in res.contexts)
+        assert roots == ["R1", "R2"]
+        # Each context is self-contained: same base/target, per-root status.
+        for c in res.contexts:
+            assert c.base_components == ("pkg",)
+            assert c.target_components == ("pkg",)
+
+    def test_multiple_source_contexts_under_inventory_permutations(self):
+        # Same inventory shape as Category 12's overlapping-roots case but
+        # asserted under every inventory permutation (Codex P3 hardening).
+        #
+        # Per the approved R2 architecture, target matching is GLOBAL across
+        # the entire inventory (not restricted to the source candidate's
+        # root), as already pinned by Category 13.  We therefore construct
+        # a target candidate under neither root so that the two source
+        # contexts differ: context A (base "p", empty suffix) targets
+        # exactly ("p",) - no candidate matches -> UNRESOLVED - while
+        # context B (base "q") targets ("q",) - a candidate matches ->
+        # RESOLVED.  This cross-root, per-context distinction must hold
+        # for every inventory permutation.
+        a_src = MC(file_path="p/m.py", name_components=("p", "m"),
+                   root="R1", root_orig="R1")
+        b_src = MC(file_path="q/n.py", name_components=("q", "n"),
+                   root="R2", root_orig="R2")
+        b_tgt = MC(file_path="q/__init__.py", name_components=("q",),
+                   file_kind="package_initializer",
+                   root="R2", root_orig="R2")
+        inv = (a_src, b_src, b_tgt)
+        r_a = rec(module="", level=1, source_path="p/m.py")
+        r_b = rec(module="", level=1, source_path="q/n.py")
+        for perm in itertools.permutations(list(inv)):
+            pa = resolve_relative_import(r_a, tuple(perm))
+            pb = resolve_relative_import(r_b, tuple(perm))
+            # Context A: target ("p",) not in inventory -> UNRESOLVED
+            # (global matching finds no ("p",) candidate).
+            assert len(pa.contexts) == 1
+            assert pa.contexts[0].status == UNRESOLVED
+            assert pa.contexts[0].supported_candidates == ()
+            # Context B: target ("q",) matches b_tgt -> RESOLVED.
+            assert len(pb.contexts) == 1
+            assert pb.contexts[0].status == RESOLVED
+            assert [x.file_path for x in pb.contexts[0].supported_candidates] \
+                == ["q/__init__.py"]
+
+    def test_equivalent_target_duplicates_consolidated(self):
+        # Two target candidates sharing a structural identity (same
+        # root.canonical + name_components + file_path) whose substantive
+        # attributes agree -> consolidated to a single deterministic
+        # representative (no "double counted" RESOLVED pair, no ValueError).
+        t1 = MC(file_path="p/t.py", name_components=("p", "t"),
+                root="R", root_orig="R-2")
+        t2 = MC(file_path="p/t.py", name_components=("p", "t"),
+                root="R", root_orig="R")
+        src = MC(file_path="p/m.py", name_components=("p", "m"))
+        r = rec(module="t", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (src, t1, t2))
+        c = res.contexts[0]
+        # Single supported candidate (dedup'd) -> RESOLVED, not AMBIGUOUS.
+        assert c.status == RESOLVED
+        assert len(c.supported_candidates) == 1
+        # Canonical representative is the lexicographically smallest
+        # diagnostic `root.original`.
+        assert c.supported_candidates[0].root.original == "R"
+
+    def test_evidence_only_target_conflicts_raise_value_error(self):
+        # Two matching targets sharing a structural identity (same
+        # root.canonical + name_components + file_path) but differing ONLY
+        # in evidence -> substantive conflict -> ValueError propagated.
+        # (Category 15 covers the file_kind conflict; this pins the
+        # evidence-only variant.)
+        t1 = MC(file_path="p/t.py", name_components=("p", "t"),
+                evidence=("e1",), root="R", root_orig="R")
+        t2 = MC(file_path="p/t.py", name_components=("p", "t"),
+                evidence=("e1", "e2"), root="R", root_orig="R2")
+        src = MC(file_path="p/m.py", name_components=("p", "m"))
+        r = rec(module="t", level=1, source_path="p/m.py")
+        with pytest.raises(ValueError):
+            resolve_relative_import(r, (src, t1, t2))
+
+    def test_result_actually_hashable(self):
+        # Codex P3: pin the hashability contract that the existing
+        # ``test_result_is_hashable_and_equal`` test claims but does not
+        # actually exercise (that test's assertions only check equality).
+        # A frozen dataclass with hashable fields IS hashable; verify on a
+        # known-good inventory.
+        r = rec(module="", level=1, source_path="pkg/helpers.py")
+        res = resolve_relative_import(r, (PKG_INIT, PKG_HELPER))
+        # Both the top-level result and each context must be hashable.
+        assert hash(res) == hash(res)
+        for c in res.contexts:
+            assert hash(c) == hash(c)
+        # A relative-resolution result can appear in a hash-based
+        # container keyed on its own value.
+        container = {res: "v1"}
+        assert container[resolve_relative_import(r, (PKG_INIT, PKG_HELPER))] == "v1"
+
+
+# ---------------------------------------------------------------------------
 # Category 20 -- Frozen regression preservation
 # ---------------------------------------------------------------------------
 # The existing frozen test suites

@@ -77,7 +77,20 @@ _ALL_REASONS: tuple[str, ...] = (
     REL_LOSSLESS_UNSAFE,
 )
 
-__all__ = list(_ALL_REASONS) + [
+# ``__all__`` must list the *names* of the exported constants (module
+# attribute identifiers), not their string values, so that
+# ``from repo_intelligence.relative_resolution import *`` succeeds
+# (Codex finding R2).
+__all__ = [
+    "REL_INVALID_KIND",
+    "REL_INVALID_LEVEL",
+    "REL_NOT_RELATIVE",
+    "REL_MALFORMED_SUFFIX",
+    "REL_INVALID_SOURCE_PATH",
+    "REL_MISSING_SOURCE_CONTEXT",
+    "REL_NO_PACKAGE_CONTEXT",
+    "REL_TRAVERSAL_BEYOND_TOP",
+    "REL_LOSSLESS_UNSAFE",
     "ContextResolution",
     "RelativeResolution",
     "resolve_relative_import",
@@ -202,6 +215,84 @@ def _dedupe_source_contexts(
             deduped.append(group[0])
 
     return tuple(sorted(deduped, key=_canonical_order_key))
+
+
+# ---------------------------------------------------------------------------
+# Malformed-structure guards (Phase 2C-3A, Codex finding R1)
+# ---------------------------------------------------------------------------
+
+
+def _validate_source_context_structure(c: ModuleCandidate) -> None:
+    """Explicit, narrow structural validation of one source-context
+    candidate performed *before* canonical sorting and hash-based
+    deduplication (Codex finding R1, malformed containers).
+
+    Synthetic :class:`ModuleCandidate` objects may carry a
+    ``name_components`` container that violates the frozen inventory
+    contract (``name_components`` is declared to be a tuple of
+    components).  If such a container reaches the frozen
+    :func:`~repo_intelligence.absolute_resolution._canonical_order_key`
+    sort or :func:`~repo_intelligence.absolute_resolution.\
+_structural_identity` hash, the failure surfaces as an incidental
+    :class:`TypeError` (``unhashable type`` / sequence-ordering) deep in
+    the frozen code.  Instead of letting that happen we reject it here
+    with a deliberate, clearly explained :class:`TypeError`.
+
+    Raises:
+        TypeError: if ``name_components`` is not a tuple (e.g. a list),
+            or if any component is unhashable (e.g. a nested list or
+            dict) and therefore cannot participate in hash-based
+            structural deduplication.
+
+    Note:
+        A tuple that *is* hashable but holds non-string components (for
+        example a bare ``int``) is deliberately NOT rejected here.  Such
+        a component instead flows on and, when it appears in a derived
+        target, is classified ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE``
+        per the approved R2 contract (see
+        :func:`_components_are_dotted_safe`).
+    """
+    components = c.name_components
+    if not isinstance(components, tuple):
+        raise TypeError(
+            "ModuleCandidate.name_components must be a tuple (the "
+            "structural container required by the frozen inventory "
+            f"contract); got {type(components).__name__}."
+        )
+    for comp in components:
+        try:
+            hash(comp)
+        except TypeError:
+            raise TypeError(
+                "ModuleCandidate.name_components contains an unhashable "
+                f"component of type {type(comp).__name__}; it cannot "
+                "participate in hash-based structural deduplication."
+            ) from None
+
+
+def _components_are_dotted_safe(components: tuple) -> bool:
+    """R1 target-safety guard applied to a *derived* target before
+    ``".".join`` is called.
+
+    Returns ``True`` only when the target is nonempty and every component
+    is a nonempty string.  In that case ``".".join(...)`` is guaranteed to
+    produce a ``str`` and the frozen dotted split
+    (:func:`repo_intelligence.absolute_resolution._split_target`) can
+    round-trip it.  Non-string (e.g. ``int``) or empty components return
+    ``False`` so the caller classifies the context
+    ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE`` instead of invoking
+    :func:`str.join`, which would otherwise raise an incidental
+    ``TypeError`` (Codex finding R1).
+
+    This guard never coerces, rewrites, or normalizes components - it
+    only decides whether the target may be delegated.
+    """
+    if not components:
+        return False
+    for comp in components:
+        if not isinstance(comp, str) or comp == "":
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +424,14 @@ def resolve_relative_import(
             record=record, contexts=(), issue=REL_MISSING_SOURCE_CONTEXT
         )
 
+    # Explicit narrow structural validation BEFORE canonical sorting and
+    # hash-based deduplication (Codex finding R1, malformed containers):
+    # a list-valued ``name_components`` or an unhashable nested component
+    # raises a deliberate, clearly explained TypeError here rather than an
+    # incidental TypeError deep in the frozen sort/hash code.
+    for src in raw_source_contexts:
+        _validate_source_context_structure(src)
+
     # Consolidate equivalent duplicates; raise ValueError on conflicting
     # substantive attributes (mirrors frozen resolver F2 behavior).
     try:
@@ -391,8 +490,38 @@ def resolve_relative_import(
         target_components = kept + suffix_components
 
         # Lossless structural-identity guard (R2 spec section 8).
-        # Every component must be non-empty, and the dotted spelling
-        # must round-trip to exactly the same component tuple.
+        #
+        # Codex finding R1: the previous code joined components with
+        # ``".".join(...)`` first, which raises an incidental
+        # ``TypeError`` the moment a component is a non-string (e.g. an
+        # ``int``).  The R2 contract instead classifies such a target
+        # ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE`` and never delegates.
+        # We therefore validate the *types* of the components BEFORE
+        # ``".".join`` is allowed to run:
+        #   1. the target tuple must be nonempty, and
+        #   2. every component must be a nonempty string.
+        # If either condition fails we return the affected context with
+        # the exact derived ``target_components`` preserved, empty
+        # candidate partitions, and do NOT call resolve_absolute_import.
+        # We never coerce or rewrite an invalid component.
+        if not _components_are_dotted_safe(target_components):
+            contexts.append(
+                ContextResolution(
+                    source_candidate=src,
+                    base_components=base,
+                    target_components=target_components,
+                    lossless=False,
+                    status=UNSUPPORTED,
+                    reason=REL_LOSSLESS_UNSAFE,
+                    supported_candidates=(),
+                    unsupported_candidates=(),
+                )
+            )
+            continue
+
+        # Every component is a nonempty string, so ``".".join`` is safe
+        # and we now confirm the frozen dotted split reproduces exactly
+        # the original component tuple (literal-dot collision protection).
         dotted = ".".join(target_components)
         if _split_target(dotted) != target_components:
             contexts.append(
