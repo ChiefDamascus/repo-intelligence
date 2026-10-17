@@ -1447,25 +1447,35 @@ class TestCategory21_R1MalformedStructures:
         for cand in (c.supported_candidates + c.unsupported_candidates):
             assert cand.file_path != "a/b/c/x.py"
 
-    def test_valid_traversal_removes_literal_dot_ancestor_delegates_safely(self):
+    def test_valid_traversal_removes_literal_dot_ancestor_delegates_safely(self, monkeypatch):
         # A source with a literal-dot component in a *removed* ancestor
         # (traversal strips it; kept/suffix are all plain strings) must
         # still delegate normally - the R1 type guard must let it through
         # because the *derived target* is dotted-safe.
-        #   source: q/r-1/s.py  (hyphen ancestor "r-1", same shape as
-        #   category 09's working test pattern)
-        #   base=("q","r-1"), level=2 -> kept=("q",), suffix=()
-        #   target=("q",) - dotted "q" re-splits to ("q",) -> safe
-        #   -> delegate; a q/__init__.py candidate exists -> RESOLVED.
+        #
+        # The ancestor "r.s" is a GENUINE literal dot (two components
+        # joined by "."), not a hyphen stand-in.
+        #   source: q/r.s/m.py        (ordinary module)
+        #   base  : ("q", "r.s")
+        #   level : 2                 -> kept = ("q",),  suffix = ()
+        #   target: ("q",)  - dotted "q" re-splits to ("q",) -> safe
+        #   delegate; q/__init__.py candidate exists -> RESOLVED.
+        #
+        # The level-1 variant of the same source still retains "r.s" in
+        # the target, so the round-trip split check fires and the target
+        # is classified UNSUPPORTED / REL_LOSSLESS_UNSAFE without
+        # delegation - this is the expected behavior for a retained
+        # literal-dot ancestor.
+        r_lit = "q/r.s/m.py"
         src = ModuleCandidate(
-            file_path="q/r-1/s.py",
+            file_path=r_lit,
             root=PackageRoot(canonical="R", original="R"),
-            qualified_name="q.r-1.s",
-            name_components=("q", "r-1", "s"),
+            qualified_name="q.r.s.m",
+            name_components=("q", "r.s", "m"),
             file_kind="ordinary_module",
             directory_kind="regular_package",
-            component_supported=False,
-            name_supported=False,
+            component_supported=True,
+            name_supported=True,
             evidence=("synthetic",),
         )
         q_init = ModuleCandidate(
@@ -1479,13 +1489,262 @@ class TestCategory21_R1MalformedStructures:
             name_supported=True,
             evidence=("synthetic",),
         )
-        r = rec(module="", level=2, source_path="q/r-1/s.py")
-        res = resolve_relative_import(r, (src, q_init))
+
+        # --- Level 2: removes "r.s" and m -> target ("q",) -> RESOLVED ---
+        r_l2 = rec(module="", level=2, source_path=r_lit)
+        res2 = resolve_relative_import(r_l2, (src, q_init))
+        c2 = res2.contexts[0]
+        assert c2.base_components == ("q", "r.s")
+        assert c2.target_components == ("q",)
+        assert c2.lossless is True
+        assert c2.status == RESOLVED
+        assert [x.file_path for x in c2.supported_candidates] == \
+            ["q/__init__.py"]
+        # No fabricated target candidate (e.g. `q/r.s/m.py` itself).
+        for cand in (c2.supported_candidates + c2.unsupported_candidates):
+            assert cand.file_path != r_lit
+
+        # --- Exactly one safe absolute-resolution delegation ---
+        captured: list = []
+        import repo_intelligence.relative_resolution as rel_mod
+        real = rel_mod.resolve_absolute_import
+
+        def spy(record, inventory):
+            captured.append(record)
+            return real(record, inventory)
+
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", spy)
+        resolve_relative_import(r_l2, (src, q_init))
+        assert len(captured) == 1
+        assert captured[0].module == "q"
+
+        # --- Level 1: retains ("q","r.s") -> UNSUPPORTED / REL_LOSSLESS_UNSAFE
+        # ---
+        r_l1 = rec(module="", level=1, source_path=r_lit)
+        res1 = resolve_relative_import(r_l1, (src, q_init))
+        c1 = res1.contexts[0]
+        assert c1.base_components == ("q", "r.s")
+        assert c1.target_components == ("q", "r.s")
+        assert c1.lossless is False
+        assert c1.status == UNSUPPORTED
+        assert c1.reason == REL_LOSSLESS_UNSAFE
+        assert c1.supported_candidates == ()
+        assert c1.unsupported_candidates == ()
+
+
+# ---------------------------------------------------------------------------
+# Category 24 -- Codex R2: mixed source-context component types
+# ---------------------------------------------------------------------------
+
+
+class TestCategory24_R2MixedComponentSorting:
+    """P2 regression tests for the deliberate pre-sort comparability
+    validation of structurally incomparable source-context candidates.
+    """
+
+    def _make_candidate(self, name_components):
+        # Two candidates with the exact Codex counterexample shape:
+        # identical root.canonical / qualified_name / file_path,
+        # differing only in name_components.
+        return ModuleCandidate(
+            file_path="q/m.py",
+            root=PackageRoot(canonical="R", original="R"),
+            qualified_name="q.m",
+            name_components=name_components,
+            file_kind="ordinary_module",
+            directory_kind="regular_package",
+            component_supported=True,
+            name_supported=True,
+            evidence=("synthetic",),
+        )
+
+    def _rec(self):
+        return ImportRecord(
+            kind="from_import", module="", names=(("x", None),),
+            level=1, source_path="q/m.py", start_line=1, start_col=0,
+        )
+
+    def test_ab_ordering_raises_deliberate_type_error(self, monkeypatch):
+        # (a, b) where a=("q","m"), b=(1,"m").  Before the fix this
+        # raised an incidental TypeError comparing int against str
+        # deep inside ``sorted()``; the corrected resolver raises a
+        # deliberate, descriptive TypeError BEFORE the frozen sort
+        # reaches the mixed components and BEFORE the frozen absolute
+        # resolver is invoked.
+        a = self._make_candidate(("q", "m"))
+        b = self._make_candidate((1, "m"))
+        r = self._rec()
+        blocker = {"called": False}
+
+        def fail(*a_, **kw):
+            blocker["called"] = True
+            raise AssertionError("frozen resolver must not be called")
+
+        import repo_intelligence.relative_resolution as rel_mod
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", fail)
+        with pytest.raises(TypeError) as exc:
+            resolve_relative_import(r, (a, b))
+        # The diagnostic names the failure and explains why sorting
+        # the mixed component types is not possible.
+        msg = str(exc.value)
+        assert "Canonical source-context ordering cannot compare" in msg
+        assert "int" in msg and "str" in msg
+        assert "coerced" in msg
+        # The absolute resolver is never reached.
+        assert blocker["called"] is False
+
+    def test_ba_ordering_raises_deliberate_type_error(self, monkeypatch):
+        # (b, a) with the opposite insertion order must produce the
+        # same intentional diagnostic (not an incidental TypeError, not
+        # a silently-selected winner).
+        a = self._make_candidate(("q", "m"))
+        b = self._make_candidate((1, "m"))
+        r = self._rec()
+        blocker = {"called": False}
+
+        def fail(*a_, **kw):
+            blocker["called"] = True
+            raise AssertionError("frozen resolver must not be called")
+
+        import repo_intelligence.relative_resolution as rel_mod
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", fail)
+        with pytest.raises(TypeError) as exc:
+            resolve_relative_import(r, (b, a))
+        msg = str(exc.value)
+        assert "Canonical source-context ordering cannot compare" in msg
+        assert "int" in msg and "str" in msg
+        assert blocker["called"] is False
+
+    def test_singleton_b_preserves_target_one_int_lossless_unsafe(self):
+        # (b,) alone: the singleton int-component behavior is
+        # deliberately preserved.  The collection is trivially
+        # comparable (only one candidate), so the check passes and
+        # the resolver classifies the derived target ("(1,)") as
+        # UNSUPPORTED / REL_LOSSLESS_UNSAFE without any TypeError.
+        b = self._make_candidate((1, "m"))
+        r = self._rec()
+        res = resolve_relative_import(r, (b,))
+        assert res.issue is None
+        c = res.contexts[0]
+        assert c.status == UNSUPPORTED
+        assert c.reason == REL_LOSSLESS_UNSAFE
+        assert c.lossless is False
+        assert c.target_components == (1,)
+        assert c.supported_candidates == ()
+        assert c.unsupported_candidates == ()
+
+    def test_singleton_a_normal_resolution_behavior(self, monkeypatch):
+        # (a,) alone: the valid string-component tuple still delegates
+        # normally and reports RESOLVED against the q/__init__.py
+        # candidate in the inventory (no TypeError).
+        a = self._make_candidate(("q", "m"))
+        q_init = ModuleCandidate(
+            file_path="q/__init__.py",
+            root=PackageRoot(canonical="R", original="R"),
+            qualified_name="q",
+            name_components=("q",),
+            file_kind="package_initializer",
+            directory_kind="regular_package",
+            component_supported=True, name_supported=True,
+            evidence=("synthetic",),
+        )
+        r = self._rec()
+        captured = []
+        import repo_intelligence.relative_resolution as rel_mod
+        real = rel_mod.resolve_absolute_import
+
+        def spy(record, inventory):
+            captured.append((record, inventory))
+            return real(record, inventory)
+
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", spy)
+        res = resolve_relative_import(r, (a, q_init))
+        assert res.issue is None
         c = res.contexts[0]
         assert c.status == RESOLVED
-        assert c.lossless is True
         assert c.target_components == ("q",)
-        assert [x.file_path for x in c.supported_candidates] == ["q/__init__.py"]
+        assert c.lossless is True
+        assert [x.file_path for x in c.supported_candidates] == \
+            ["q/__init__.py"]
+        # Exactly one delegation with the dotted "q" target.
+        assert len(captured) == 1
+        assert captured[0][0].module == "q"
+
+    def test_multiple_valid_context_inventory_remains_deterministic(self):
+        # Multiple valid source contexts (all string components) still
+        # produce a deterministic canonical ordering, and every inventory
+        # permutation maps to the same ordered ContextResolution
+        # sequence.  This guards against the R2 check regressing the
+        # existing string-tuple ordering guarantees.
+        p_init = MC(file_path="p/__init__.py", name_components=("p",),
+                    file_kind="package_initializer",
+                    component_supported=True, name_supported=True,
+                    root="R", root_orig="R")
+        p_sub_init = MC(file_path="p/sub/__init__.py",
+                        name_components=("p", "sub"),
+                        file_kind="package_initializer",
+                        component_supported=True, name_supported=True,
+                        root="R", root_orig="R")
+        a = MC(file_path="p/mod.py", name_components=("p", "mod"),
+               root="R", root_orig="R")
+        inv = (a, p_init, p_sub_init)
+        r = rec(module="sub", level=1, source_path="p/mod.py")
+
+        baseline = resolve_relative_import(r, inv)
+        assert baseline.issue is None
+        assert len(baseline.contexts) >= 1
+        expected_contexts = baseline.contexts
+        for perm in itertools.permutations(list(inv)):
+            p_res = resolve_relative_import(r, tuple(perm))
+            assert p_res.record is r
+            assert p_res.issue is None
+            assert p_res.contexts == expected_contexts
+            # Same canonical per-context ordering every permutation.
+            assert [c.source_candidate.name_components
+                    for c in p_res.contexts] == \
+                   [c.source_candidate.name_components
+                    for c in expected_contexts]
+
+    def test_equivalent_duplicates_still_consolidate_under_new_guard(self):
+        # Equivalent source-context duplicates (different diagnostic
+        # root.original, otherwise identical) MUST still consolidate to
+        # a single deterministic canonical representative after the R2
+        # check is applied.  The check is well-defined here because all
+        # components are string-typed and mutually comparable.
+        a = MC(file_path="p/m.py", name_components=("p", "m"),
+               root="R", root_orig="R-2")
+        b = MC(file_path="p/m.py", name_components=("p", "m"),
+               root="R", root_orig="R-1")
+        tgt = MC(file_path="p/t.py", name_components=("p", "t"),
+                 root="R", root_orig="R")
+        r = rec(module="t", level=1, source_path="p/m.py")
+        res = resolve_relative_import(r, (a, b, tgt))
+        assert res.issue is None
+        assert len(res.contexts) == 1
+        c = res.contexts[0]
+        assert c.status == RESOLVED
+        # The consolidated source candidate is the deterministic
+        # canonical representative (smallest diagnostic root.original).
+        assert c.source_candidate.root.original == "R-1"
+        assert [x.file_path for x in c.supported_candidates] == ["p/t.py"]
+
+    def test_conflicting_evidence_still_raises_value_error_under_new_guard(
+            self):
+        # Conflicting substantive evidence on otherwise-equivalent
+        # candidates MUST still propagate as a ValueError.  This
+        # confirms the R2 check does not mask the conflict path (which
+        # fires AFTER the comparability check when components are
+        # mutually comparable - here, all strings).
+        a1 = MC(file_path="p/m.py", name_components=("p", "m"),
+                root="R", root_orig="R", evidence=("e1",))
+        a2 = MC(file_path="p/m.py", name_components=("p", "m"),
+                root="R", root_orig="R-2", evidence=("e1", "e2"))
+        r = rec(module="t", level=1, source_path="p/m.py")
+        with pytest.raises(
+            ValueError,
+            match="Conflicting duplicate source-context candidates",
+        ):
+            resolve_relative_import(r, (a1, a2))
 
 
 # ---------------------------------------------------------------------------
@@ -1577,6 +1836,7 @@ class TestCategory23_P3Hardening:
             for c in (PKG_INIT, PKG_HELPER):
                 call_count["n"] += 1
                 yield c
+            call_count["exhausted"] = True
 
         r = rec(module="", level=1, source_path="pkg/__init__.py")
         gen_iter = gen()
@@ -1584,6 +1844,69 @@ class TestCategory23_P3Hardening:
         assert res.issue is None
         assert len(res.contexts) == 1
         assert call_count["n"] == 2
+        assert call_count.get("exhausted") is True
+
+    def test_one_shot_iterable_invokes_iter_once(self, monkeypatch):
+        # Strengthen the one-shot guarantee with a custom iterable that
+        # counts ``__iter__`` calls and REJECTS repeated iteration.
+        # If the resolver ever tried to re-iterate the inventory (e.g.
+        # for a second pass over source contexts, dedup, or delegation),
+        # this iterable would raise -- so passing proves exactly one
+        # ``__iter__`` call.
+        class Once:
+            def __init__(self, items):
+                self.items = tuple(items)
+                self.iter_calls = 0
+                self.consumed = 0
+            def __iter__(self):
+                if self.iter_calls > 0:
+                    raise AssertionError(
+                        "__iter__ called more than once: resolver must "
+                        "not re-iterate the inventory after materializing"
+                    )
+                self.iter_calls += 1
+                for x in self.items:
+                    self.consumed += 1
+                    yield x
+
+        it = Once((PKG_INIT, PKG_HELPER))
+
+        captured: list = []
+        import repo_intelligence.relative_resolution as rel_mod
+        real = rel_mod.resolve_absolute_import
+
+        def spy(record, inventory):
+            captured.append((record, inventory))
+            return real(record, inventory)
+
+        monkeypatch.setattr(rel_mod, "resolve_absolute_import", spy)
+
+        # `from . import x` in pkg/__init__.py -> base ("pkg",), target
+        # ("pkg",), which matches the PKG_INIT candidate (delegates once).
+        r = rec(module="", level=1, source_path="pkg/__init__.py")
+        res = resolve_relative_import(r, it)
+
+        # Exactly one __iter__ call; a second would have raised.
+        assert it.iter_calls == 1
+        # Every expected candidate was consumed exactly once.
+        assert it.consumed == len(it.items) == 2
+        # The expected resolution is returned.
+        assert res.issue is None
+        assert len(res.contexts) == 1
+        c = res.contexts[0]
+        assert c.target_components == ("pkg",)
+        assert c.status == RESOLVED
+        # The resolver delegated exactly once, passing the SAME
+        # materialized inventory (both candidates present) - and after
+        # that delegation it did NOT re-iterate (``it.consumed`` is
+        # unchanged still == 2, no second __iter__ attempted).
+        assert len(captured) == 1
+        rec_d, inv_d = captured[0]
+        assert inv_d[0].file_path == "pkg/__init__.py"
+        assert inv_d[1].file_path == "pkg/helpers.py"
+        assert it.consumed == 2
+
+
 
     def test_delegated_importrecord_fields_preserved(self, monkeypatch):
         # Explicit assertion of the delegated ImportRecord:
@@ -1654,10 +1977,23 @@ class TestCategory23_P3Hardening:
         assert res.contexts[0].unsupported_candidates == ()
 
     def test_overlapping_roots_package_initializer_contexts(self):
-        # Category 12 currently covers overlapping roots with ordinary
-        # modules.  This test adds the package-initializer case
-        # (source is a __init__.py) where two roots yield two distinct
-        # initializer contexts and no ambiguous target is available.
+        # Category 12 covers overlapping roots with ordinary modules.
+        # This test adds the package-initializer case (source is an
+        # __init__.py) where two distinct roots (R1, R2) each claim the
+        # same physical file with the same (name_components, file_path),
+        # so the two source-context candidates are DISTINCT (different
+        # root.canonical -> two contexts) rather than merged.
+        #
+        # The frozen absolute resolver matches targets against the
+        # COMPLETE inventory, so both contexts resolve the target
+        # ("pkg",) against the SAME candidate (the source candidate
+        # itself, whose name_components == ("pkg",) for an
+        # initializer).  Consequently each context returns RESOLVED
+        # with that candidate in its supported partition -- the two
+        # per-context supported partitions agree but each context is
+        # self-contained over its own source candidate identity; no
+        # cross-context winner is required and the target set itself is
+        # a single consolidated candidate.
         a_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
                     file_kind="package_initializer", root="R1", root_orig="R1")
         b_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
@@ -1667,47 +2003,100 @@ class TestCategory23_P3Hardening:
         assert len(res.contexts) == 2
         roots = sorted(c.source_candidate.root.canonical for c in res.contexts)
         assert roots == ["R1", "R2"]
-        # Each context is self-contained: same base/target, per-root status.
+        # Each context is self-contained: same base/target, per-root
+        # source-candidate identity.
         for c in res.contexts:
             assert c.base_components == ("pkg",)
             assert c.target_components == ("pkg",)
 
     def test_multiple_source_contexts_under_inventory_permutations(self):
-        # Same inventory shape as Category 12's overlapping-roots case but
-        # asserted under every inventory permutation (Codex P3 hardening).
+        # Genuine multiple source-contexts for a SINGLE source_path
+        # (Codex P3 hardening).  The name now matches what is asserted
+        # in the body: exactly ONE source file, TWO distinct package-root
+        # interpretations of that file, and one resolution yields
+        # TWO ContextResolution objects (not one per different source).
         #
-        # Per the approved R2 architecture, target matching is GLOBAL across
-        # the entire inventory (not restricted to the source candidate's
-        # root), as already pinned by Category 13.  We therefore construct
-        # a target candidate under neither root so that the two source
-        # contexts differ: context A (base "p", empty suffix) targets
-        # exactly ("p",) - no candidate matches -> UNRESOLVED - while
-        # context B (base "q") targets ("q",) - a candidate matches ->
-        # RESOLVED.  This cross-root, per-context distinction must hold
-        # for every inventory permutation.
-        a_src = MC(file_path="p/m.py", name_components=("p", "m"),
-                   root="R1", root_orig="R1")
-        b_src = MC(file_path="q/n.py", name_components=("q", "n"),
-                   root="R2", root_orig="R2")
-        b_tgt = MC(file_path="q/__init__.py", name_components=("q",),
-                   file_kind="package_initializer",
-                   root="R2", root_orig="R2")
-        inv = (a_src, b_src, b_tgt)
-        r_a = rec(module="", level=1, source_path="p/m.py")
-        r_b = rec(module="", level=1, source_path="q/n.py")
+        #   * a single source_path, e.g.  "p/m.py"
+        #   * two ModuleCandidate source interpretations (same file):
+        #       - under package root R_p:  name_components=("p", "m")
+        #       - under package root R_alt: name_components=("q", "m")
+        #     Both satisfy file_path == "p/m.py".
+        #   * level 1, empty suffix:
+        #     - interpretation A keeps base ("p",) -> target ("p",)
+        #       -> a package-init candidate for "p" exists -> RESOLVED.
+        #     - interpretation B keeps base ("q",) -> target ("q",)
+        #       -> no ("q",) candidate matches -> UNRESOLVED.
+        #   * The two ContextResolution outcomes differ meaningfully.
+        #   * Every permutation of the same complete inventory produces
+        #     an identical ordered sequence of ContextResolution objects
+        #     (frozen canonical order).
+        #   * No root is promoted to a global winner - each context
+        #     reports its own status; the resolver never picks a root.
+        #   * The original record is retained by identity (record is r).
+        p_init = MC(file_path="p/__init__.py", name_components=("p",),
+                    file_kind="package_initializer",
+                    component_supported=True, name_supported=True,
+                    root="R_p", root_orig="R_p")
+        a_ctx = MC(file_path="p/m.py", name_components=("p", "m"),
+                   root="R_p", root_orig="R_p")
+        # Same physical file, second interpretation under a different
+        # package root ("q" root - realistic, e.g. a repo with both
+        # `q/p/m.py` and `p/m.py` in different roots; here the file is
+        # indexed under root "R_alt" and interpreted as ("q", "m")).
+        b_ctx = MC(file_path="p/m.py", name_components=("q", "m"),
+                   root="R_alt", root_orig="R_alt")
+
+        inv = (a_ctx, b_ctx, p_init)
+        r = rec(module="", level=1, source_path="p/m.py")
+
+        # Baseline: TWO ContextResolutions, one RESOLVED and one
+        # UNRESOLVED, in canonical deterministic order.
+        base_res = resolve_relative_import(r, inv)
+        assert base_res.record is r
+        assert base_res.issue is None
+        assert len(base_res.contexts) == 2
+        # The outcomes differ meaningfully: exactly one RESOLVED and
+        # exactly one UNRESOLVED (Codex P3 requirement).
+        assert {c.status for c in base_res.contexts} == \
+            {RESOLVED, UNRESOLVED}
+        # The RESOLVED context targets ("p",) with the p_init supported
+        # candidate; the UNRESOLVED context targets ("q",) with no
+        # supported/unsupported candidates.
+        resolved_c = next(c for c in base_res.contexts
+                          if c.status == RESOLVED)
+        unresolved_c = next(c for c in base_res.contexts
+                            if c.status == UNRESOLVED)
+        assert resolved_c.target_components == ("p",)
+        assert [x.file_path for x in resolved_c.supported_candidates] == \
+            ["p/__init__.py"]
+        assert unresolved_c.target_components == ("q",)
+        assert unresolved_c.supported_candidates == ()
+        assert unresolved_c.unsupported_candidates == ()
+
+        # Every permutation of the same complete inventory produces an
+        # IDENTICAL ordered sequence of ContextResolution objects.
+        # (We rely on dataclass equality, which is structural - the
+        # original `record` object is preserved by identity only in the
+        # top-level RelativeResolution, not in each context.)
+        expected_contexts = base_res.contexts
         for perm in itertools.permutations(list(inv)):
-            pa = resolve_relative_import(r_a, tuple(perm))
-            pb = resolve_relative_import(r_b, tuple(perm))
-            # Context A: target ("p",) not in inventory -> UNRESOLVED
-            # (global matching finds no ("p",) candidate).
-            assert len(pa.contexts) == 1
-            assert pa.contexts[0].status == UNRESOLVED
-            assert pa.contexts[0].supported_candidates == ()
-            # Context B: target ("q",) matches b_tgt -> RESOLVED.
-            assert len(pb.contexts) == 1
-            assert pb.contexts[0].status == RESOLVED
-            assert [x.file_path for x in pb.contexts[0].supported_candidates] \
-                == ["q/__init__.py"]
+            p_res = resolve_relative_import(r, tuple(perm))
+            assert p_res.record is r
+            assert p_res.issue is None
+            assert len(p_res.contexts) == 2
+            assert p_res.contexts == expected_contexts
+            # Same canonical order as the baseline (no global winner).
+            src_roots = [c.source_candidate.root.canonical
+                         for c in p_res.contexts]
+            assert src_roots == [c.source_candidate.root.canonical
+                                 for c in base_res.contexts]
+            # No root was promoted to a global winner; the two
+            # independent per-context outcomes remain distinguishable.
+            assert len({c.status for c in p_res.contexts}) == 2
+            # The source contexts remain different physical
+            # interpretations: distinct root.canonical values.
+            assert len(set(src_roots)) == 2
+
 
     def test_equivalent_target_duplicates_consolidated(self):
         # Two target candidates sharing a structural identity (same

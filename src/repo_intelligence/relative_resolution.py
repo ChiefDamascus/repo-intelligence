@@ -245,12 +245,18 @@ _structural_identity` hash, the failure surfaces as an incidental
             structural deduplication.
 
     Note:
-        A tuple that *is* hashable but holds non-string components (for
-        example a bare ``int``) is deliberately NOT rejected here.  Such
-        a component instead flows on and, when it appears in a derived
-        target, is classified ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE``
-        per the approved R2 contract (see
+        A hashable component that is a non-string (for example a bare
+        ``int``) is deliberately NOT rejected here.  Such a component
+        instead flows on and, when it appears in a derived target, is
+        classified ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE`` per the
+        approved R2 contract (see
         :func:`_components_are_dotted_safe`).
+        Comparability of *distinct* source-context candidates against
+        one another (Codex finding R2) is validated separately at the
+        context-set level by
+        :func:`_validate_source_context_comparability`, because a
+        single candidate's own components never require cross-candidate
+        ordering.
     """
     components = c.name_components
     if not isinstance(components, tuple):
@@ -268,6 +274,84 @@ _structural_identity` hash, the failure surfaces as an incidental
                 f"component of type {type(comp).__name__}; it cannot "
                 "participate in hash-based structural deduplication."
             ) from None
+
+
+def _validate_source_context_comparability(
+    candidates: tuple[ModuleCandidate, ...],
+) -> None:
+    """Deliberate, narrow pre-sort comparability validation for one
+    source context (Codex finding R2, mixed in-context component
+    types).
+
+    Per-candidate hashing (above) guarantees each component is
+    hashable, but hashability does NOT imply cross-candidate
+    comparability: two candidates that agree on the first three
+    canonical-ordering positions (``root.canonical``,
+    ``qualified_name``, ``file_path``) fall through to a pairwise
+    element-wise comparison of their ``name_components`` tuples under
+    the frozen
+    :func:`repo_intelligence.absolute_resolution._canonical_order_key`,
+    and Python cannot order an ``int`` against a ``str`` (or any other
+    incompatible type pairing).  A mixed collection therefore produces
+    an incidental ``TypeError`` deep inside ``sorted()`` whose outcome
+    depends on the incidental inventory insertion order.
+
+    This check therefore raises a deliberate, explanatory
+    :class:`TypeError` *before* canonical sorting or hash-based
+    deduplication whenever two distinct candidates in the same context
+    share the first three canonical-ordering positions AND their
+    component tuples cannot actually be compared element-by-element.
+    The check invents no ordering between incompatible component types
+    and never coerces a component to a string or otherwise rewrites
+    identity - it only rejects collections whose canonical order is
+    not well-defined.
+
+    A singleton context (one candidate) is trivially safe and therefore
+    never rejected here, preserving the existing behavior that
+    a single candidate with a non-string (e.g. ``int``) component flows
+    on to be classified ``UNSUPPORTED`` / ``REL_LOSSLESS_UNSAFE`` per
+    the approved R2 contract (see
+    :func:`_components_are_dotted_safe`).
+
+    Raises:
+        TypeError: if two distinct candidates in *candidates* share
+            ``root.canonical`` / ``qualified_name`` / ``file_path``
+            AND have structurally incompatible ``name_components``
+            (different types at the first non-matching element).
+    """
+    if len(candidates) < 2:
+        return
+    keys = [
+        (_canonical_order_key(c)[:3], c.name_components)
+        for c in candidates
+    ]
+    for i in range(len(keys)):
+        head_i, comps_i = keys[i]
+        for j in range(i + 1, len(keys)):
+            head_j, comps_j = keys[j]
+            if head_i != head_j:
+                continue
+            # First three canonical-ordering positions already agree;
+            # the frozen sort will next compare the component tuples
+            # element-by-element - validate that this comparison is
+            # actually well-defined (no cross-type element pairing).
+            try:
+                comps_i <= comps_j
+            except TypeError:
+                _types = sorted(
+                    {type(x).__name__ for x in comps_i + comps_j}
+                )
+                raise TypeError(
+                    "Canonical source-context ordering cannot compare "
+                    "the supplied structural components of types "
+                    f"{', '.join(_types)}: two distinct source-context "
+                    "candidates in the same context share root "
+                    "canonical, qualified name, and file path but carry "
+                    "name_components whose types are not mutually "
+                    "comparable; the collection is rejected before "
+                    "canonical sorting rather than ordered arbitrarily "
+                    "or coerced."
+                ) from None
 
 
 def _components_are_dotted_safe(components: tuple) -> bool:
@@ -430,7 +514,15 @@ def resolve_relative_import(
     # raises a deliberate, clearly explained TypeError here rather than an
     # incidental TypeError deep in the frozen sort/hash code.
     for src in raw_source_contexts:
+        # Per-candidate structural validation; on success the candidate's
+        # components are all hashable, so the collection-level check below
+        # is well-defined.
         _validate_source_context_structure(src)
+    # Deliberate pre-sort comparability validation (Codex finding R2,
+    # mixed component types across the context): a collection whose
+    # canonical ordering is not well-defined raises a descriptive
+    # TypeError here, before the frozen sort/hash code is reached.
+    _validate_source_context_comparability(raw_source_contexts)
 
     # Consolidate equivalent duplicates; raise ValueError on conflicting
     # substantive attributes (mirrors frozen resolver F2 behavior).
