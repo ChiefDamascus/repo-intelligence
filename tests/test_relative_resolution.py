@@ -1978,36 +1978,63 @@ class TestCategory23_P3Hardening:
 
     def test_overlapping_roots_package_initializer_contexts(self):
         # Category 12 covers overlapping roots with ordinary modules.
-        # This test adds the package-initializer case (source is an
-        # __init__.py) where two distinct roots (R1, R2) each claim the
-        # same physical file with the same (name_components, file_path),
-        # so the two source-context candidates are DISTINCT (different
-        # root.canonical -> two contexts) rather than merged.
+        # This test covers the package-initializer case (source is an
+        # __init__.py) where two distinct canonical roots (R1, R2) each
+        # claim the same physical file with the same
+        # (name_components, file_path).  Because ``root.canonical``
+        # differs, the two source-context candidates have DISTINCT
+        # structural identities and are NOT consolidated: one source
+        # file yields two independent source contexts.
         #
-        # The frozen absolute resolver matches targets against the
-        # COMPLETE inventory, so both contexts resolve the target
-        # ("pkg",) against the SAME candidate (the source candidate
-        # itself, whose name_components == ("pkg",) for an
-        # initializer).  Consequently each context returns RESOLVED
-        # with that candidate in its supported partition -- the two
-        # per-context supported partitions agree but each context is
-        # self-contained over its own source candidate identity; no
-        # cross-context winner is required and the target set itself is
-        # a single consolidated candidate.
+        # The frozen absolute resolver matches the target against the
+        # COMPLETE inventory, not just the source candidate's root.
+        # Both source candidate AND the matching target are the file
+        # ``pkg/__init__.py`` with components ``("pkg",)`` -- so each
+        # context's derived target ``("pkg",)`` matches BOTH the R1 and
+        # the R2 candidates.  Because those two target candidates are
+        # distinct (different ``root.canonical``) and BOTH supported,
+        # the frozen resolver reports a genuine multiple-candidate
+        # ambiguity rather than resolving to a single winner.
+        #
+        # Therefore each context carries:
+        #   base_components == ("pkg",)
+        #   target_components == ("pkg",)
+        #   status          == AMBIGUOUS
+        #   reason          == REASON_MULTI_SUPPORTED
+        #   supported_candidates: BOTH R1 and R2, in canonical order
+        #   unsupported_candidates: ()
+        # Source-context multiplicity and per-context provenance
+        # (distinct source root) are preserved.  The resolver does NOT
+        # manufacture a RESOLVED outcome to hide the genuine ambiguity.
         a_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
                     file_kind="package_initializer", root="R1", root_orig="R1")
         b_init = MC(file_path="pkg/__init__.py", name_components=("pkg",),
                     file_kind="package_initializer", root="R2", root_orig="R2")
         r = rec(module="", level=1, source_path="pkg/__init__.py")
         res = resolve_relative_import(r, (a_init, b_init))
+        # Preserved: one source file yields two distinct source contexts.
+        assert res.issue is None
+        assert res.record is r
         assert len(res.contexts) == 2
         roots = sorted(c.source_candidate.root.canonical for c in res.contexts)
         assert roots == ["R1", "R2"]
-        # Each context is self-contained: same base/target, per-root
-        # source-candidate identity.
+        # Each context is self-contained over its own source root, and
+        # both report the same genuine multiple-supported-candidate
+        # ambiguity against the complete inventory.
         for c in res.contexts:
+            # Source-context provenance and multiplicity preserved.
+            assert c.source_candidate in (a_init, b_init)
             assert c.base_components == ("pkg",)
             assert c.target_components == ("pkg",)
+            assert c.status == AMBIGUOUS
+            assert c.reason == REASON_MULTI_SUPPORTED
+            # BOTH R1 and R2 target candidates are retained (canonical
+            # order: R1 < R2), and no unsupported candidates exist.
+            supported_roots = [x.root.canonical
+                               for x in c.supported_candidates]
+            assert sorted(supported_roots) == ["R1", "R2"]
+            assert len(c.supported_candidates) == 2
+            assert c.unsupported_candidates == ()
 
     def test_multiple_source_contexts_under_inventory_permutations(self):
         # Genuine multiple source-contexts for a SINGLE source_path
