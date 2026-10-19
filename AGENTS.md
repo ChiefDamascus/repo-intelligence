@@ -31,3 +31,36 @@ On a Stop denial, inspect the reported issue within the two-file scope and conti
 Before acceptance, report focused tests, full applicable regression results, F1-F6 dispositions, changed files, final Git working-tree status and limitations. A01-A23 and the corrected D1-D17 matrix require verification beyond this hook. Independent Codex review remains required before acceptance and merge. Do not mark milestones complete or frozen based on hook output.
 
 The historical `PLAN.md` was not updated by hook installation. Preserve the distinction between that historical plan and the separately approved Phase 2C-3B-1 scope documented in the hook guide.
+
+## Phase 2C-3B-2 scope (approved)
+
+Approved architecture: `docs/phase-2c-3b-2-architecture-approved.md`
+Original review: `docs/phase-2c-3b-2-architecture-review.md`
+Approved by the project owner (see §17 of the approved architecture; approval
+quote preserved in that document).
+
+The Phase 2C-3B-2 implementation allowlist is exactly:
+
+- `src/repo_intelligence/wildcard_import_analysis.py` (new — one public function
+  `analyze_wildcard_import` plus result/evidence dataclasses and code constants)
+- `tests/test_wildcard_import_analysis.py` (new — W1–W24 acceptance matrix)
+
+All other existing production modules and tests remain **frozen / protected
+unchanged** for this scope, including both Phase 2C-3B-1 files, the
+2C-3B-1 stop guard, and the existing `.openhands/` hook configuration.
+
+The scoped Phase 2C-3B-2 completion guard enforces only the static checks it
+can verify: the two authorized files exist, parse as Python, the production
+file exposes a compatible top-level `analyze_wildcard_import(record, inventory,
+target_sources)` API, and the test file has discoverable tests. It does **not**
+assert purity, immutability, semantic coverage, W1–W24 completeness, or
+regression success. It fails open on operational errors and denies at most once
+per conversation. An allow decision is not evidence of acceptance.
+
+The standalone guard (file) and the merged `hooks.json` are separate
+installation additions, outside the two-file implementation allowlist.
+Independent Codex review, W1–W24 acceptance, and user acceptance remain
+separate gates (see §12, §15, §17 of the approved architecture). Do not begin
+2C-3B-2 implementation without a fresh conversation that has loaded the merged
+hook configuration. Do not stage, commit, push, or merge. Do not advance the
+next phase without that phase's own authorization.
