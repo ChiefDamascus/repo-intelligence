@@ -164,18 +164,18 @@ The 51 phase tests are a subset of the 752; the other 701 are the pre-existing f
 
 ## 6. Remaining Phase 2C milestones
 
-### Phase 2C-3B-2 — Wildcard / `__all__` static evidence analysis (IMPLEMENTATION COMPLETE — AWAITING MERGE)
+### Phase 2C-3B-2 — Wildcard / `__all__` static evidence analysis (ACCEPTED + MERGED / COMPLETE — PR #5, merge `eed78f9`)
 
 - **APPROVED by the human (project owner) on 2026-10-19 (observation 2026-10-19T15:31:37Z).** All 13 items of the §15 approval checklist are marked approved (normalized to `[x]` in the approved copy). The approved contract is recorded in [`docs/phase-2c-3b-2-architecture-approved.md`](docs/phase-2c-3b-2-architecture-approved.md); the user-marked proposal review is preserved byte-for-byte in [`docs/phase-2c-3b-2-architecture-review.md`](docs/phase-2c-3b-2-architecture-review.md). The human's exact approval is quoted in §17 of the approved record.
 - The approved technical scope is: a pure `analyze_wildcard_import` API, immutable context/candidate results, literal-only `__all__` declarations, explicit ABSENT/DECLARED/UNKNOWN states, no fallback for unknown exports, and bounded direct default-name evidence with `default_scope` coverage. Unsupported candidates are retained without parsing or names; source failures remain candidate-scoped; frozen resolver ambiguity, duplicate errors and ordering are preserved. W1–W24, R-1–R-8, exclusions and the separate implementation/workflow file allowlists are all part of the accepted contract.
 - **Two-file runtime/test implementation allowlist:** `src/repo_intelligence/wildcard_import_analysis.py` and `tests/test_wildcard_import_analysis.py`. **Workflow-preparation allowlist:** `AGENTS.md`, `docs/openhands-stop-hooks.md`, `.openhands/hooks.json`, `.openhands/phase2c3b2_stop_guard.py`, and an external backup directory (outside the repository).
 - **IMPLEMENTATION COMPLETE** — both allowlist files created; W1–W24 and R-1–R-8 all implemented and tested.
-- **Test evidence:** 72 focused (`tests/test_wildcard_import_analysis.py`) + 311 regression (4-file set) + 824 full suite — all passing, exit 0. Run at the accepted baseline `main` `ee29406f` with empty index.
+- **Test evidence:** 72 focused (`tests/test_wildcard_import_analysis.py`) + 311 regression (4-file set) + 824 full suite — all passing (captured pytest summary: 824 passed). Run at the accepted baseline `main` `ee29406f` with empty index. The independent Codex review inspected implementation, corrections/tests and captured execution evidence; it did not independently rerun the suite.
 - **Independent Codex review: PASSED** (scope: inspected implementation + corrections/tests + captured execution evidence; no independent suite rerun).
 - **Human acceptance: APPROVED** (explicit project-owner authorization, 2026-10-19).
-- **Git promotion: AUTHORIZED** (project owner, 2026-10-19).
+- **Git promotion: AUTHORIZED + COMPLETED** — PR [#5](https://github.com/ChiefDamascus/repo-intelligence/pull/5), branch `feat/phase-2c-3b-2-wildcard-import-analysis`, implementation commit `681523d`, merged into `main` as `eed78f94f934eeb957526990954b5e28065b275b` (2026-10-19).
 - **Implementation files:** `src/repo_intelligence/wildcard_import_analysis.py` (SHA256 `6180d4be42f5dfdb11cbd44d91ef108a4f1e7940d9b40db52c596e8e3e5d1e58`); `tests/test_wildcard_import_analysis.py` (SHA256 `dfcac7f349060196e31e3872453d81cecb2735937168d589450fe5774259b65b`).
-- **All 9 promotion files** (2 implementation + 2 workflow docs + 2 hooks + 2 architecture docs + PLAN.md) staged and committed as part of this promotion.
+- **All 8 promotion files** (2 implementation + 2 workflow docs + 2 hooks + 2 architecture docs) committed in `681523d`; PLAN.md follow-up committed in `eaf82dd`.
 
 ### Phase 2C-4 — Query/API exposure (PENDING)
 
