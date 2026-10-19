@@ -1,0 +1,16 @@
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "name": "repo-intelligence-phase2c3b1-completion-guard",
+          "command": "/usr/local/bin/python3 -B /projects/repo-intelligence/.openhands/phase2c3b1_stop_guard.py",
+          "timeout": 10,
+          "async": false
+        }
+      ]
+    }
+  ]
+}
