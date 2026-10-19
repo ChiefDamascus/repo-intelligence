@@ -174,3 +174,121 @@ Scope rule: Any change outside the two authorized paths, or any requirement to m
 ## Installation-specific paths
 
 Persistent external state: `/projects/.openhands-stop-guard-state-10001/retries-v1`. Backups and rollback manifests: `/projects/.openhands-stop-guard-state-10001/backups`.
+
+## Phase 2C-3B-2 scope and guard (approved architecture; guard prepared 2026-10-19)
+
+Approved architecture: `docs/phase-2c-3b-2-architecture-approved.md` (status:
+ARCHITECTURE APPROVED — IMPLEMENTATION AUTHORIZATION, NOT STARTED). Original
+review: `docs/phase-2c-3b-2-architecture-review.md`. Scope revision recorded
+in `PLAN.md`. See §3, §7 and §13 of the approved architecture for the
+implementation allowlist, W1–W24 acceptance matrix, and the
+workflow-preparation allowlist, respectively.
+
+### Implementation allowlist (two files, separate from the workflow allowlist)
+
+```
+src/repo_intelligence/wildcard_import_analysis.py
+tests/test_wildcard_import_analysis.py
+```
+
+- Production: one public function
+  `analyze_wildcard_import(record, inventory, target_sources)
+  -> WildcardAnalysis` plus new result/evidence dataclasses and code
+  constants in the approved architecture §7. Pure, deterministic, no
+  filesystem/DB/network/runtime-import access; reuses the 2C-3B-1 carrier
+  types `TargetContext` / `SourceAssessment` / `TargetSource` verbatim.
+- Test: W1–W24 acceptance matrix (approved architecture §12).
+- All other existing production modules and tests remain frozen /
+  protected unchanged by this scope, including both 2C-3B-1 files, the
+  2C-3B-1 stop guard, the existing `.openhands/hooks.json`, the AGENTS.md
+  2C-3B-1 section, and the existing hook guide.
+
+### Scoped 2C-3B-2 completion guard
+
+Installed as the 2C-3B-2 named hook (alongside, not replacing, the 2C-3B-1
+named hook):
+
+- Guard file: `.openhands/phase2c3b2_stop_guard.py`
+- Merged `hooks.json` entry (appended after the 2C-3B-1 entry under the
+  same `stop.matcher = "*"`):
+  name `repo-intelligence-phase2c3b2-completion-guard`;
+  command `/usr/local/bin/python3 -B /projects/repo-intelligence/.openhands/phase2c3b2_stop_guard.py`;
+  synchronous, timeout 10s.
+- Prefix: `PHASE2C3B2_GUARD` (distinct from the 2C-3B-1 guard, which is
+  `PHASE2C3B1_GUARD`). The retry-budget key is therefore
+  `sha256(prefix || project-root || session)`, giving this guard its own
+  per-conversation denial budget even when both guards share the same state
+  directory.
+- Retry state: `/projects/.openhands-stop-guard-state-10001/retries-v1/`
+  (same external state root as the 2C-3B-1 guard; marker keys are
+  phase-tagged so budgets do not collide).
+- Backup and rollback: `/projects/.openhands-stop-guard-state-10001/backups/`
+  holds `hooks.json.bak`, `AGENTS.md.bak`,
+  `openhands-stop-hooks.md.bak`, and `RESTORE_2C3B2.txt` (restore
+  instructions and pre-preparation SHA-256 for the three backup-tracked
+  files).
+
+### Checks performed (and not performed) by the 2C-3B-2 guard
+
+- Performed (static, syntactic only):
+  - Both authorized files exist and are regular files (no symlinks in the
+    inspected path chain), under 1 MiB each.
+  - Both files parse as valid Python (AST).
+  - The production file declares a top-level synchronous
+    `analyze_wildcard_import` whose first three positional parameter names
+    are `record`, `inventory`, `target_sources`, with no additional
+    required positional or keyword-only parameters.
+  - The test file contains a top-level `test_*` function, or a `test_*`
+    method inside a top-level class whose name begins with `Test`.
+- Not performed (not claimed by the guard):
+  - Purity, immutability, no I/O, no runtime import execution.
+  - Semantic correctness of `analyze_wildcard_import`; W1–W24 coverage;
+    pytest collection and passing.
+  - Independent Codex review; user acceptance; merge.
+  - Enforcement of the 2C-3B-1 allowlist (the 2C-3B-1 guard remains in
+    place for its own scope; this guard does not substitute for it).
+- Operational failures (missing state, malformed input, wrong working
+  directory, missing identity, timeout, corrupt markers, capacity, lock
+  contention) **fail open** — the guard returns `decision=allow` with a
+  `FAIL_OPEN` diagnostic. It never emits `deny` from an error handler.
+- Denial budget: at most one `deny` per conversation. The consumed budget
+  is persisted (atomic marker write + fsync) before the `deny` decision is
+  returned. Passing checks do not reset the budget. Subsequent failures in
+  the same conversation allow completion with the unresolved finding
+  reported.
+
+### Validation performed during this preparation (2026-10-19)
+
+- Guard script AST-parses under Python 3.13 (stdlib-only, no third-party
+  imports).
+- `hooks.json` parses as valid JSON and loads via the installed
+  `openhands.sdk.hooks.config.HookConfig` (`stop` field carries both
+  named hooks).
+- 2C-3B-2 guard isolated checks (fixtures in
+  `/projects/.openhands-stop-guard-state-10001/fixtures/`):
+  - PASS case (valid fixture tree → `decision=allow`, prefix
+    `PHASE2C3B2_GUARD`).
+  - Deny-once case (fixture tree with missing authorized files → first
+    call `decision=deny`, second call in the same session
+    `decision=allow`, marker persisted to
+    `retries-v1/`).
+  - Fail-open case (guard run with a non-existent state directory →
+    `decision=allow` with `FAIL_OPEN` in the reason; no marker is created
+    as a side effect).
+  - Independent-budget case (2C-3B-1 and 2C-3B-2 guards invoked with the
+    same fixture tree and the same session id produce different marker
+    keys, so they do not consume each other's budget).
+- The 2C-3B-1 guard file was not modified (SHA-256 recorded in
+  `RESTORE_2C3B2.txt` as `01bf67199702be94e1f2abe69438474d40054e6cc1821dd3fcd22d538e525c83`).
+- Unrelated files (`PLAN.md`, the two approved architecture documents, the
+  two 2C-3B-1 implementation and test files) retain their pre-preparation
+  SHA-256 digests.
+
+### Handoff notes (not performed in this task)
+
+- The 2C-3B-2 implementation must run in a fresh Agent Canvas conversation
+  in which the merged `hooks.json` is loaded at conversation start.
+- The single-denial budget of the current 2C-3B-2 preparation conversation
+  is preserved; this preparation task does not consume it (fixtures are
+  outside the real repository, and the guard's state directory is only
+  touched via the marker paths named above).
