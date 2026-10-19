@@ -158,8 +158,8 @@ class TestScanExclusions:
         patterns = glob
         assert _matches_gitignore(file_pattern, patterns) is expected
 
-    def test_secret_dotenv_files_skipped_by_default(self):
-        """Files like .env and .env.* should be excluded by default."""
+    def test_dotenv_files_excluded_when_gitignore_matches(self):
+        """Files matching the target repository's .gitignore are excluded."""
         with tempfile.TemporaryDirectory(prefix="repo_int_test_") as td:
             repo = Path(td)
             (repo / ".env").write_text("SECRET=abc\n", encoding="utf-8")

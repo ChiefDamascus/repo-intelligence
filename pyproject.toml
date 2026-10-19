@@ -5,9 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "repo-intelligence"
 version = "1.0.0"
-description = "Repository intelligence: scanning, indexing, and semantic search for codebases"
+description = "Local repository scanning, full-text indexing, and static Python analysis"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "0BSD"}
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.0",

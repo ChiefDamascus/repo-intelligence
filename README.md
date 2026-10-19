@@ -1,14 +1,25 @@
 # Repository Intelligence
 
-A reusable local repository indexing and navigation tool. It scans a codebase, produces a file inventory with language classification and SHA-256 integrity hashes, persists all data to an external SQLite database, and provides FTS5 full-text search over indexed text content. Designed to support coding agents and developers exploring unfamiliar repositories.
+A reusable, local, offline-first repository intelligence system. It scans a codebase, produces a file inventory with language classification and SHA-256 integrity hashes, persists all data to an external SQLite database, provides FTS5 full-text search over indexed text, and performs static Python analysis: AST symbol extraction, import extraction, deterministic absolute-import and relative-import module-target resolution, and named imported-item static evidence analysis. Designed to support coding agents and developers exploring unfamiliar repositories.
 
 ## Current Status
 
-This repository represents **Phase 1** of the `repo-intelligence` project. Phase 1 covers foundational file scanning, indexing, and text search. Advanced capabilities such as AST/symbol analysis, semantic code understanding, and LLM integration are planned for future phases (see *Limitations* below).
+`repo-intelligence` implements Phase 1 (file scanning, indexing, and text search) plus the static-analysis milestones through Phase 2C-3B-1. The following capabilities are already present and queryable:
+
+- File inventory, language classification, and SHA-256 hashing (Phase 1)
+- FTS5 full-text search over indexed text content (Phase 1)
+- Python AST symbol extraction and persistence (Phase 2A)
+- Python import / imported-name extraction and persistence (Phase 2B)
+- Deterministic Python module inventory and package-root mapping (Phase 2C-1)
+- Pure, deterministic absolute-import resolution (Phase 2C-2A) and its read-only database-backed adapter (Phase 2C-2B)
+- Pure relative-import module-target resolution (Phase 2C-3A)
+- Named imported-item static evidence analysis (Phase 2C-3B-1)
+
+These are **static, programmatic** analyses performed against supplied inputs; they do not execute, import, or load target code. Extraction of symbols and import statements surfaces via `repo-index symbols` and `repo-index imports`; the absolute-import and relative-import module-target resolvers and the named imported-item static evidence analysis are not yet exposed as a subcommand. The named imported-item analysis returns conservative static evidence against the supplied module inventory and source text, not a confirmed runtime binding. Embeddings, vector/semantic search, documentation generation, LLM integration, and MCP integration are **not** implemented (see *Limitations* below).
 
 ## Project Purpose
 
-`repo-intelligence` provides a local, offline-first mechanism to:
+`repo-intelligence` provides a local, offline-first repository intelligence system to:
 
 - Recursively scan any repository directory
 - Classify files by language based on file extension
@@ -32,7 +43,7 @@ Development dependencies include `pytest`.
 
 ## CLI Usage
 
-The `repo-index` console entry point (installed by `pyproject.toml`) provides four subcommands:
+The `repo-index` console entry point (installed by `pyproject.toml`) provides six subcommands: `build`, `stats`, `files`, `search-files`, `symbols`, and `imports`.
 
 ### Build an index
 
@@ -65,15 +76,15 @@ Additional `--ignore-dirs NAME` options can be supplied to exclude extra directo
 ### Show indexing statistics
 
 ```bash
-repo-index stats [db_path] [--json]
+repo-index stats [--db-path PATH] [--json]
 ```
 
-Displays total file count, total bytes, language breakdown, and git metadata. When no `db_path` is given, the database at the current directory's computed external location is used (same hash derivation as `build`). Output can be rendered as valid JSON with `--json`.
+Displays total file count, total bytes, language breakdown, and git metadata. When no `--db-path` is given, the database at the current directory's computed external location is used (same hash derivation as `build`). Output can be rendered as valid JSON with `--json`.
 
 ### List indexed files
 
 ```bash
-repo-index files [db_path] [--lang LANG] [--path PREFIX] [--limit N] [--offset N] [--json]
+repo-index files [--db-path PATH] [--lang LANG] [--path PREFIX] [--limit N] [--offset N] [--json]
 ```
 
 Lists files from the index with optional filtering:
@@ -98,7 +109,7 @@ repo-index files --json                             # JSON output
 ### Full-text search over indexed content
 
 ```bash
-repo-index search-files <query> [db_path] [--json]
+repo-index search-files QUERY [--db-path PATH] [--json]
 ```
 
 Searches the FTS5 text index. Two modes:
@@ -109,6 +120,24 @@ Searches the FTS5 text index. Two modes:
 | Path glob | `repo-index search-files "like:*.py"` | Searches within file **paths** via SQLite LIKE |
 
 Binary files and files exceeding 10 MB are intentionally excluded from text indexing. A nonexistent query returns cleanly with exit code 0 (no match, never error).
+
+### List indexed symbols
+
+```bash
+repo-index symbols [--db-path PATH] [--name NAME] [--qualified-name QNAME] [--kind KIND] [--file PATH] [--limit N] [--offset N] [--json]
+```
+
+Lists symbols extracted from Python sources during `build`. The `--name`, `--qualified-name`, `--kind` (e.g. `class`, `function`, `method`), and `--file` filters are applied as exact-match predicates. Output can be rendered as valid JSON with `--json`.
+
+### List indexed import statements
+
+```bash
+repo-index imports [--db-path PATH] [--file PATH] [--module MODULE] [--name NAME] [--kind KIND] [--limit N] [--offset N] [--json]
+```
+
+Lists import / from-import statements and their imported names as extracted during `build`. The `--module` and `--name` filters match the module and an imported name respectively (exact match, not the alias); `--kind` matches the import kind (e.g. `import`, `from_import`). Output can be rendered as valid JSON with `--json`.
+
+> Note: the absolute-import and relative-import module-target resolvers and the named imported-item static evidence analysis are **programmatic** APIs; they are not yet wired to a `repo-index` subcommand.
 
 ## Index Storage
 
@@ -133,7 +162,7 @@ Additional exclusions:
 - **File-level** exclusions parse and apply patterns from the target's `.gitignore` file (supports exact names, `*.glob` patterns, directory suffixes like `logs/`, root-relative `/path`, `**/wildcard`). Note: full Git ignore specification edge cases may not all be covered.
 - **Binary files**: detected by null-byte check in the first 8 KB and by extension whitelist (`.png`, `.jpg`, `.pdf`, `.zip`, `.so`, `.dll`, etc.) — these are still indexed for metadata but their content is **not** text-indexed.
 - **Large files**: files exceeding 10 MB are treated as binary and excluded from text indexing.
-- **Secrets**: no automatic detection or stripping of `.env` / secret file contents at this time; only file-level name matching can exclude them via `--ignore-dirs`.
+- **Sensitive content:** The index stores copies of indexed text and may contain credentials, personal data, confidential information, or third-party copyrighted material. Secret detection and redaction are not implemented. Configure the target repository's `.gitignore` before indexing; `--ignore-dirs` excludes directory names, not individual secret files. Index only material you are authorized to process, protect the database, and review its contents before sharing it or providing it to an external service.
 
 ## Git Metadata
 
@@ -153,32 +182,31 @@ Non-git directories can still be indexed; all git metadata fields will simply be
 - File inventory queries (`files` subcommand) and text searches (`search-files` subcommand) are separate: listing uses the `files` table (language, path, size, sha256); searching uses the `file_content_fts` virtual table.
 - The `--lang` filter on the `files` command is case-insensitive; the `--path` filter matches files whose `rel_path` starts with the given prefix followed by `/`.
 
-## Limitations (Phase 1)
+## Limitations
 
-This phase intentionally omits advanced analysis features. The following are **not** implemented:
+This project intentionally omits several advanced analysis and integration features. The following are **not** implemented:
 
 | Category | Not yet implemented |
 |---|---|
-| Code structure | No AST or symbol indexing; no language-aware parsing |
-| Call analysis | No caller/callee graph; no import/reference graph |
-| Test mapping | No semantic test-to-production code mapping |
-| Documentation | No automatic DeepWiki / documentation generation |
-| Semantic search | No embeddings or vector-based similarity search |
+| Static analysis | AST, symbol, and import analysis is **Python-only**; other languages are classified by extension but not parsed |
+| Resolution | Absolute-/relative-import module-target resolvers and the named imported-item static evidence analysis are programmatic APIs only; no `repo-index` subcommand |
+| Call analysis | No caller/callee graph; no language-wide reference graph |
+| Test mapping | No test-to-production code mapping |
+| Documentation | No automatic repository documentation generation |
+| Semantic search | No embeddings or vector-based similarity search (search is FTS5 full-text, not vector similarity) |
 | Integration | No MCP or external API integration |
 | LLM | No LLM integration at any layer |
-| Code understanding | No semantic code analysis beyond file classification |
+| Code understanding | No cross-file semantic inference beyond the deterministic static analyses listed above |
 | Git ignore edge cases | gitignore support covers common patterns but may not implement every edge case of the full Git specification |
 
 ## Future Phases (Planned)
 
-Phase 2+ capabilities intended for the roadmap:
+Roadmap capabilities that remain **unimplemented**:
 
-- Python AST and general symbol indexing
-- Import / reference graph construction
-- Caller / callee call graphs
-- Semantic test-to-production mapping
-- DeepWiki automated documentation generation
+- Call / reference graphs beyond the deterministic import-resolution analyses
+- Automated repository documentation generation
 - Embeddings and vector similarity search
+- Cross-language static analysis (AST/symbol/import analysis is currently Python-only)
 - LLM-powered code analysis and summarization
 - MCP / API integration for external tool compatibility
 
@@ -229,4 +257,4 @@ conn.close()
 
 ## License
 
-MIT
+This project's original code is available under the Zero-Clause BSD license (0BSD); see [LICENSE](LICENSE). Third-party materials remain subject to their respective licenses. This license does not grant rights to third-party trademarks or to repositories indexed by the tool.

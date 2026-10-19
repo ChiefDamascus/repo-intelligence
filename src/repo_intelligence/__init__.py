@@ -1,4 +1,4 @@
-"""Repository Intelligence - scanning, indexing, and semantic search for codebases."""
+"""Local repository scanning, full-text indexing, and static Python analysis."""
 
 from repo_intelligence.scanner import scan_repo
 from repo_intelligence.module_inventory import (

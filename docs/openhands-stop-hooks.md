@@ -158,7 +158,7 @@ These supersede contradictory provisions in earlier design reports.
 - SQLite schemas, persistence, or query changes.
 - CLI integration — Phase 2C-4.
 - Dependency graphs.
-- MCP or DeepWiki integration.
+- MCP integration or repository documentation generation.
 - Runtime import execution or import-path precedence simulation.
 - Unrelated refactoring.
 - Automatic merge into `main`.

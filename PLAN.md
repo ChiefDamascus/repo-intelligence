@@ -10,7 +10,7 @@
 
 ## 1. Mission and principles
 
-Build a reusable, local, offline-first, Devin-like repository intelligence system that enables OpenHands, Codex, and local LLM agents to understand repositories without repeatedly rediscovering their structure.
+Build a reusable, local, offline-first repository intelligence system that enables coding agents and developers to understand repositories through indexed structural facts, static analysis, and navigable documentation.
 
 Development principles:
 
@@ -59,7 +59,7 @@ Development principles:
 | **2D** | Direct local module/file dependency relationships | **PROPOSED** | Confirm design after Phase 2C acceptance. |
 | **2E** | Reverse dependencies and bounded graph traversal/impact assessment | **PROPOSED** | Depends on trustworthy direct relationships. |
 | **3** | Repository knowledge model linking files, modules, symbols and imports | **PROPOSED** | Define stable entity/relationship contracts. |
-| **4** | DeepWiki-style navigable documentation and architecture summaries | **PROPOSED** | Derived from structural data; evidence links required. |
+| **4** | Navigable repository documentation and architecture summaries | **PROPOSED** | Derived from structural data; evidence links required. |
 | **5** | Agent/tool integration for OpenHands, Codex and local LLMs | **PROPOSED** | Prefer early read-only access to stable queries, possibly MCP. |
 | **6** | Multi-repository reuse and incremental index maintenance | **PROPOSED** | Confirm index versioning, rebuild, isolation and invalidation model. |
 
@@ -140,7 +140,7 @@ Development principles:
 - Public API: `analyze_named_import(record, inventory, target_sources) -> ImportNameAnalysis`.
 - Required properties: pure and deterministic; immutable result objects; preservation of original `ImportRecord` identity; candidate-scoped evidence with original root/file provenance; compatibility with the frozen absolute and relative resolvers; no filesystem/DB/network access.
 - Mandatory acceptance checks A01–A23 and binding corrections F1–F6 are recorded in the approved scope section of the hook guide; they are **not** asserted as passing here.
-- Explicitly excluded: wildcard/`__all__` analysis (2C-3B-2), SQLite schema/persistence/query changes, CLI integration (2C-4), dependency graphs, MCP/DeepWiki integration, runtime import execution, and unrelated refactoring.
+- Explicitly excluded: wildcard/`__all__` analysis (2C-3B-2), SQLite schema/persistence/query changes, CLI integration (2C-4), dependency graphs, MCP integration or repository documentation generation, runtime import execution, and unrelated refactoring.
 - Any production or test change outside the two authorized paths, or any requirement to modify a frozen interface, is a blocker requiring separate approval. Targeted PLAN.md updates and [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md) maintenance are already authorized under the standing workflow.
 
 **Current implementation status:** COMPLETE in this controlled-retry conversation on the `qwen3.8-openhands-192k-no-thinking` profile. Both authorized files now exist as new (untracked) files on branch `feat/phase-2c-3b-1-named-import-analysis` at base `9c393f4378c6fca157b50533fc171dc8d529c084`:
@@ -188,19 +188,19 @@ Add bounded inbound/outbound dependency navigation, cycle controls, confidence/u
 
 Unify files, modules, symbols, imports and relationships into stable, queryable records with evidence references.
 
-### Phase 4 — DeepWiki
+### Phase 4 — Repository documentation
 
 Generate navigable module guides, architecture notes and cross-references grounded in the index, with refresh and provenance rules.
 
 ### Phase 5 — OpenHands/Codex/local-model integration
 
-Expose safe read-only repository queries through agent tools or MCP, ideally before all DeepWiki generation is complete; prevent agent tools from silently mutating the source repositories.
+Expose safe read-only repository queries through agent tools or MCP, ideally before repository documentation generation is complete; prevent agent tools from silently mutating the source repositories.
 
 ### Phase 6 — Multi-repository and incremental maintenance
 
 Support deterministic repository isolation, index freshness checks, incremental updates, version migration strategy and operational performance improvements.
 
-**Suggested delivery sequence:** Finish 2C -> basic dependency queries -> early read-only OpenHands/Codex integration -> broader knowledge model/DeepWiki -> multi-repository and incremental enhancements. Phase numbers/scope can be revised only as a documented decision.
+**Suggested delivery sequence:** Finish 2C -> basic dependency queries -> early read-only OpenHands/Codex integration -> broader repository knowledge model and documentation generation -> multi-repository and incremental enhancements. Phase numbers/scope can be revised only as a documented decision.
 
 ## 8. Current CLI surface (already present)
 
@@ -241,6 +241,7 @@ Next prerequisite: ...
 
 ## 10. Decision and change log
 
+- **2026-10-19 — LEGAL/BRANDING DOCUMENTATION MAINTENANCE (scope approved; Codex review PASSED):** User approved a documentation-and-packaging cleanup (this is maintenance, not a phase implementation) that (a) removes competitor branding ("DeepWiki") and misleading "semantic search" framing from `PLAN.md`, `README.md`, `docs/openhands-stop-hooks.md`, and `docs/phase-2c-3b-1-approved-contract.md`; (b) corrects the stale Phase 1 status/CLI/limitations in `README.md` to reflect the six actual CLI commands and the static programmatic absolute-import and relative-import module-target resolvers plus the named imported-item static evidence analysis now present; (c) adopts a FOSS-compatible license (selected under the user's FOSS-license request) via a new `LICENSE`, the `pyproject.toml` license declaration, and a new `CONTRIBUTING.md` contributing-terms clause — the standard OSI-approved Zero-Clause BSD (0BSD) text, no named holder, no assertion of absent copyright / independent development / legal clearance; and (d) renames `tests/test_scanner.py::test_secret_dotenv_files_skipped_by_default` to reflect that exclusion is driven by the target repository's `.gitignore`, not a built-in default. Affected paths: `PLAN.md`, `README.md`, `pyproject.toml`, `src/repo_intelligence/__init__.py`, `tests/test_scanner.py`, `docs/openhands-stop-hooks.md`, `docs/phase-2c-3b-1-approved-contract.md`, `CONTRIBUTING.md` (new), `LICENSE` (new). Phase advancement is **not** performed and prior acceptance history is **not** rewritten. Baseline: `main` `2337d70024b4464758514522cc1c12074f1f9af8`. Verification: focused `python -m pytest tests/test_scanner.py -q` → **33 passed**; full `python -m pytest -q` → **752 passed**; built wheel+SDIST outside the repo and verified wheel/sdist/package-metadata `License: 0BSD` + `License-File: LICENSE`, with the LICENSE file byte-identical across source, wheel bundle, and SDIST (SHA-256 `29a986ac2e4513a2a6c51321ffade7982b54fee108d45edea62927e13b9fd7ad`, 624 bytes, the standard OSI-approved Zero-Clause BSD text). Independent **Codex review: PASSED** (targeted doc corrections applied as findings; runtime/scope clean). The single authorized commit on `main` follows Codex PASS.
 - **2026-10-19 — 2C-3B-1 MERGED to main as PR #4 (merge `894af8b67cceb190d4279e884ff14f3a52ff152d`, 2026-10-19T04:39:20Z):** The project owner merged PR #4 (head `feat/phase-2c-3b-1-named-import-analysis` → base `main`), merging the two scoped commits `f6e209a` (Phase 2C-3B-1 source/test/contract/PLAN) and `ed413a3` (standing workflow + guard + hook + hook guide) into `main`. All 9 files for 2C-3B-1 are now on `main`. Phase 2C-3B-2 start remains a separate user decision.
 - **2026-10-19 — 2C-3B-1 USER ACCEPTED (2026-10-19 UTC) — MERGE PENDING (historical — superseded by the 2026-10-19 MERGED entry above):** The project owner explicitly authorized acceptance of Phase 2C-3B-1, a two-commit workflow (source+test+contract+PLAN in one commit; the five workflow files in the second), push of the feature branch, and filing a PR against `main` (no merge). Acceptance is based on: focused **51 passed** + full **752 passed** suite (re-verified in this conversation at the verified hashes), independent Codex review **PASSED** (24 independent probes + 5 supplemental checks, no blocking findings), and the A01–A23 + F1–F6 / corrected D1–D17 matrix. Two new files: `src/repo_intelligence/imported_name_analysis.py` (SHA256 `b72db890…`), `tests/test_imported_name_analysis.py` (SHA256 `df5fa655…`). Working-tree state at authorization: branch `feat/phase-2c-3b-1-named-import-analysis`, HEAD `9c393f4378c6fca157b50533fc171dc8d529c084`, index empty, `PLAN.md` modified (this entry + prior reconciliation), 8 untracked files (both phase files + 5 workflow files + contract doc). Merge and Phase 2C-3B-2 start remain separate user decisions. This entry supersedes the "incomplete / files absent / review pending" statements in this file; those remain only as historical context.
 - **2026-10-19 — 2C-3B-1 IMPLEMENTED + INDEPENDENT CODEX REVIEW PASSED; USER ACCEPTANCE PENDING (historical — superseded by the 2026-10-19 ACCEPTED entry above):** Controlled-retry conversation on the `qwen3.8-openhands-192k-no-thinking` profile created both authorized new files and brought the suite green. Evidence: focused `python -m pytest tests/test_imported_name_analysis.py -q` → **51 passed** (≈0.1 s); full `python -m pytest tests/ -q` → **752 passed** (≈93 s; 51 phase tests + 701 pre-existing frozen regression tests, all unchanged). Independent Codex review **PASSED** (24 independent probes + 5 supplemental checks at the verified hashes, no blocking code/test findings). New-file hashes: `src/repo_intelligence/imported_name_analysis.py` = `b72db8904830fbd45aa7f65c5c386fcca0867fb73f2c1dd5d5aa9e60f8a0c58f`; `tests/test_imported_name_analysis.py` = `df5fa65592de8d492f3c036b10a6ded66e26fcc1c773f9772bb44a769baed98c`. Contract record: [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md). Protected files (`.openhands/hooks.json`, `.openhands/phase2c3b1_stop_guard.py`, `AGENTS.md`, `docs/openhands-stop-hooks.md`, `docs/phase-workflow.md`) hash-verified byte-for-byte unchanged; branch `feat/phase-2c-3b-1-named-import-analysis` and HEAD `9c393f4378c6fca157b50533fc171dc8d529c084` preserved; index clean (no staged changes). No staging/commit/push/merge performed. **USER ACCEPTANCE PENDING**; acceptance, merge, freeze, and 2C-3B-2 start remain explicit user decisions. This entry supersedes every "files absent / implementation incomplete / awaiting review" statement for current status; those prior statements are retained only as historical reconciliation context.

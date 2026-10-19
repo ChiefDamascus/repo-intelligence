@@ -86,7 +86,7 @@ All other production and the 701 pre-existing regression tests remain **frozen**
 
 ## 8. Hard boundaries (NOT implemented)
 
-Wildcard/`__all__` (2C-3B-2), `analyze_wildcard_import`, `AllSpec`, DB persistence/CLI, dependency graphs, MCP/DeepWiki, runtime import execution, unrelated refactoring.
+Wildcard/`__all__` (2C-3B-2), `analyze_wildcard_import`, `AllSpec`, DB persistence/CLI, dependency graphs, MCP integration or repository documentation generation, runtime import execution, unrelated refactoring.
 
 ## 9. Conservative limits / documented unknowns
 
