@@ -1,10 +1,10 @@
 # Repo Intelligence — Project Plan and Phase Status
 
 **Status:** Living project roadmap  
-**Last updated:** 2026-10-14  
+**Last updated:** 2026-10-19 (UTC)  
 **Project:** `repo-intelligence`  
 **Authoritative implementation repository:** `ChiefDamascus/repo-intelligence`  
-**Active implementation milestone:** Phase 2C-2B — read-only database-backed absolute import resolution (**architecture approved; implementation authorized, not yet verified**)  
+**Active implementation milestone:** Phase 2C-3B-1 — named imported-item static evidence analysis (**ACCEPTED (explicit user authorization, 2026-10-19 UTC); independent Codex review PASSED; 51 focused + 752 full suite passing; two scoped commits in progress, then PR to main — no merge**)  
 
 > **Maintenance requirement:** Update this file whenever a phase or milestone changes status, scope, acceptance decision, merge state, or blocking dependency. Changes to this file should accompany the corresponding implementation or review milestone, not be deferred to a later documentation cleanup. Do not mark a milestone frozen, accepted, or merged without recorded evidence.
 
@@ -28,8 +28,11 @@ Development principles:
 |---|---|
 | **FROZEN** | Implemented, accepted, and treated as a stable contract. No modifications without an explicitly approved correction milestone. |
 | **MERGED / COMPLETE** | Implementation accepted and merged, with remaining integration/freeze terminology recorded separately if applicable. |
+| **MERGED — ACCEPTANCE NOT REVERIFIED** | Integration evidenced by local Git (`main`/`origin/main` pointing at the merge commit, PR/merge commit present in `git log`); independent acceptance, review and freeze were not reverified in the reconciliation that recorded this status. Live GitHub freshness is not asserted. |
 | **COMPLETE (DESIGN)** | Planning/reconnaissance milestone finished; no additional implementation is implied. |
 | **ARCHITECTURE APPROVED — IMPLEMENTATION AUTHORIZED** | Approved implementation scope and acceptance criteria; implementation, tests, review and merge remain to be completed and verified. |
+| **APPROVED — IMPLEMENTATION IN PROGRESS** | Approval and acceptance contract recorded; implementation started or attempted but not completed; focused/regression tests, independent review and merge remain outstanding. |
+| **APPROVED — AWAITING CONTROLLED RETRY / TESTS / INDEPENDENT REVIEW** | Approval and acceptance contract recorded; implementation incomplete (e.g., a previous conversation ended without producing the authorized files or tests); the next implementation conversation is expected to resume within the same approved scope. |
 | **PLANNING — APPROVAL PENDING** | Architecture discussion or document only. Coding not authorized. |
 | **PENDING — NOT AUTHORIZED** | Planned work that has not been approved for implementation. |
 | **PROPOSED** | A roadmap suggestion; number, scope, and sequence may change. |
@@ -37,7 +40,7 @@ Development principles:
 
 ## 3. Master phase tracker
 
-| Phase | Deliverable | Status as of 2026-10-14 | Evidence / next gate |
+| Phase | Deliverable | Status as of 2026-10-18 | Evidence / next gate |
 |---|---|---|---|
 | **1** | Repository inventory, scanning, SHA-256, Git metadata, SQLite and FTS5 | **FROZEN** | Established Phase 1 baseline and CLI. |
 | **2A** | Python AST symbol extraction and persistence | **FROZEN** | Symbols query CLI and persistence accepted. |
@@ -48,8 +51,10 @@ Development principles:
 | **2C-0 / 2C-0A / 2C-0B** | Import-resolution reconnaissance and corrected architecture | **COMPLETE (DESIGN)** | Documented in the prior project roadmap. |
 | **2C-1** | Deterministic Python module inventory and package-root mapping | **FROZEN** | Final R3 Codex PASS; frozen `main` base commit `039b399807a9b844e11acae35171464a5e02483a`. |
 | **2C-2A** | Pure deterministic absolute import resolver | **MERGED / COMPLETE** | [PR #1](https://github.com/ChiefDamascus/repo-intelligence/pull/1) merged 2026-10-14; source commit `7c0ab4296cf2b97ac45539e90ffdebf85279ee9b`, merge commit `d4fc71d18eff7f2d0e7f41af781df2125d7a4f22`. Final Codex review was reported PASS. |
-| **2C-2B** | Read-only database-backed absolute import adapter | **ARCHITECTURE APPROVED — IMPLEMENTATION AUTHORIZED** | [Approved architecture](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) (A–E, 2026-10-14). Next: scoped OpenHands implementation, focused and full tests, independent Codex review. |
-| **2C-3** | Relative imports and separate from-import name/submodule analysis | **PENDING — NOT AUTHORIZED** | Requires Phase 2C-2 acceptance and an independently approved scope. |
+| **2C-2B** | Read-only database-backed absolute import adapter | **MERGED — ACCEPTANCE NOT REVERIFIED** | Merged as PR #2 (merge commit `730121fff40fc223c7fde29bba58ca9e26897748`, source `c800d03`, branch `feat/phase-2c-2b-db-absolute-resolution`). Evidence: local-ref `main`/`origin/main` and `git log --merges` in this checkout. No live GitHub freshness check; independent acceptance, Codex review and freeze were not reverified in this reconciliation. |
+| **2C-3** | Relative imports and separate from-import name/submodule analysis | **SPLIT** (sub-milestones below) | 2C-3A relative module-target resolution is implemented and locally merged per this checkout's refs (acceptance not reverified); 2C-3B-1 named-imported-item static analysis is a separately approved sub-milestone. |
+| **2C-3A** | Pure relative module-target resolution (sibling of 2C-2X for relative imports) | **MERGED — ACCEPTANCE NOT REVERIFIED** | Merged as PR #3, head commit `9c393f4378c6fca157b50533fc171dc8d529c084`; local `main` and `origin/main` refs point at that commit in this checkout. Live GitHub freshness not checked in this reconciliation; independent acceptance, Codex review and freeze were not reverified. |
+| **2C-3B-1** | Named imported-item static evidence analysis (`analyze_named_import`) | **ACCEPTED by explicit user authorization (2026-10-19 UTC) — INDEPENDENT CODEX REVIEW PASSED** | Approved scope, acceptance checks A01–A23 and binding corrections F1–F6 recorded in [`docs/openhands-stop-hooks.md`](docs/openhands-stop-hooks.md); recovered contract in [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md). Authorized files `src/repo_intelligence/imported_name_analysis.py` and `tests/test_imported_name_analysis.py` are present (new, untracked). 51 focused + 752 full suite passing; independent Codex review PASSED (24 independent probes + 5 supplemental checks). User explicitly approved acceptance on 2026-10-19 UTC. Merge and 2C-3B-2 start remain separate user decisions. See section 5. |
 | **2C-4** | Resolution integration, query exposure and optional CLI | **PENDING — NOT AUTHORIZED** | Requires prior resolver milestones and interface approval. |
 | **2D** | Direct local module/file dependency relationships | **PROPOSED** | Confirm design after Phase 2C acceptance. |
 | **2E** | Reverse dependencies and bounded graph traversal/impact assessment | **PROPOSED** | Depends on trustworthy direct relationships. |
@@ -58,7 +63,7 @@ Development principles:
 | **5** | Agent/tool integration for OpenHands, Codex and local LLMs | **PROPOSED** | Prefer early read-only access to stable queries, possibly MCP. |
 | **6** | Multi-repository reuse and incremental index maintenance | **PROPOSED** | Confirm index versioning, rebuild, isolation and invalidation model. |
 
-**Important:** Phase 2C-2A is the pure resolver; Phase 2C-2B is its database adapter. The initial uploaded roadmap grouped absolute resolution under Phase 2C-2 before this split was introduced. Future phases 2D–6 remain suggestions, **not authorized commitments**.
+**Important:** Phase 2C-2A is the pure resolver; Phase 2C-2B is its database adapter. The initial uploaded roadmap grouped absolute resolution under Phase 2C-2 before this split was introduced. Phase 2C-3 is split into 2C-3A (relative imports) and 2C-3B-1 (named imported-item static evidence analysis); both are tracked separately in the master table. Future phases 2D–6 remain suggestions, **not authorized commitments**.
 
 ## 4. Completed foundation
 
@@ -106,35 +111,62 @@ Development principles:
 - For `from pkg.mod import item`, the resolver targets **`pkg.mod` only**, not the imported name `item`. Relative imports remain unattempted for 2C-3.
 - Merged through [PR #1](https://github.com/ChiefDamascus/repo-intelligence/pull/1). Test counts reported during review are historical agent reports rather than tests rerun while preparing this document.
 
-## 5. Current work — Phase 2C-2B
+### Phase 2C-2B — Read-only database-backed absolute-resolution adapter (MERGED — ACCEPTANCE NOT REVERIFIED)
 
-**Goal:** Make the Phase 2C-2A pure resolver useful against an existing SQLite index, while enforcing database read-only behavior and leaving frozen components unchanged.
+- New production module `src/repo_intelligence/db_absolute_resolution.py` (added in commit `827469e`, revised in `c800d03`) and companion test file `tests/test_db_absolute_resolution.py`.
+- Opens the existing SQLite index with `mode=ro`; single consistent read snapshot; `SELECT`/introspection only; no DDL, writes or rebuild.
+- Reconstructs `ImportRecord` instances with names persisted in position order, preserves source path, import kind, module, level and source coordinates.
+- Preserves the full Phase 2C-1 inventory and passes each reconstructed record to the frozen `resolve_absolute_import()`; retains all outcomes in deterministic source order (see P2 findings fixed in `c800d03`: deterministic ordering + invalid-kind pass-through).
+- Merged via PR #2 at merge commit `730121fff40fc223c7fde29bba58ca9e26897748`; `feat/phase-2c-2b-db-absolute-resolution` branch still carries source `c800d03`.
+- The pre-merge architecture record remains in [`PHASE_2C_2B_ARCHITECTURE_APPROVED.md`](PHASE_2C_2B_ARCHITECTURE_APPROVED.md); the merge record above reflects the current locally-merged state without re-verifying acceptance or freeze.
 
-**Current authorization:** Architecture **approved** on 2026-10-14; implementation and testing are authorized **only within the approved scope**. Implementation has not been verified or marked complete.
+### Phase 2C-3A — Pure relative module-target resolution (MERGED — ACCEPTANCE NOT REVERIFIED)
 
-**Approved implementation boundaries:**
+- New production module `src/repo_intelligence/relative_resolution.py` (662 lines) and test file `tests/test_relative_resolution.py` (2,257 lines), added in commit `9c393f4378c6fca157b50533fc171dc8d529c084` ("Phase 2C-3A: Pure Relative Module-Target Resolution (#3)").
+- Commit history for the PR lists follow-ups: Codex P2 findings addressed, relative source-context ordering validated, and overlapping-root ambiguity assertions corrected.
+- Commit message includes `Co-authored-by: OpenHands <OpenHands.github.test>` and `Co-authored-by: openhands <openhands@all-hands.dev>`; merge into `main` is evidenced by the branch being the head of the local `main`/`origin/main` refs in this checkout (live GitHub freshness not checked in this reconciliation).
+- Local `main` and `origin/main` refs point to `9c393f4`; no later merge is recorded in this checkout. Independent acceptance, Codex review and freeze were not reverified during this reconciliation.
 
-- A new, small adapter module operating on an **existing** database path and an explicit nonempty root list.
-- Database opened `mode=ro`; a single consistent read snapshot for complete file inventory, import statements and imported-name rows.
-- Read-only `SELECT`/introspection against `files`, `imports` and `import_names`; no DDL, schema repair, caching, writes, rebuild, or new tables.
-- Reconstruct exact `ImportRecord` instances with names ordered by persisted `position`, preserving source path, import kind, module, level and source coordinates.
-- Pass the **complete** Phase 2C-1 inventory and each reconstructed import to the frozen `resolve_absolute_import()`; retain all outcomes in deterministic source order.
-- Explicit roots supplied by caller; no automatic root guessing or `sys.path`-based discovery.
-- No CLI, no new persistence format, no runtime imports, no relative-resolution expansion, and no modification to Phase 1/2A/2B/2C-1/2C-2A.
+## 5. Current work — Phase 2C-3B-1 (ACCEPTED — INDEPENDENT CODEX REVIEW PASSED; AWAITING MERGE)
 
-**Approved design constraint:** The existing `search.get_imports()` invokes `_ensure_imports_tables()` with `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements. It therefore does **not** meet the strict Phase 2C-2B no-DDL contract. The adapter must use its **own SELECT-only loader** instead of calling that helper; **do not edit** the frozen helper as part of 2C-2B.
+**Goal:** Pure, deterministic static analysis of named imported items over an existing immutable `ImportRecord`, frozen Phase 2C-1/2C-2A/2C-2B/2C-3A evidence, and caller-supplied target sources — with candidate-scoped, root-provenance evidence and no I/O or runtime import execution.
 
-**Approval record:** On 2026-10-14, architecture decisions A–E were approved: (1) public adapter API/return type, (2) consistent read snapshot/connection ownership, (3) strict schema and malformed-row behavior, (4) deterministic ordering and full inventory rules, and (5) the no-write acceptance-test matrix. **Next gate:** scoped implementation followed by focused/full tests and independent Codex review; approval does not imply completion.
+**Approved scope (per [`docs/openhands-stop-hooks.md`](docs/openhands-stop-hooks.md)):**
 
-See [`PHASE_2C_2B_ARCHITECTURE_APPROVED.md`](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) for the approved implementation contract (A–E).
+- Authorized production file — NEW: `src/repo_intelligence/imported_name_analysis.py`.
+- Authorized test file — NEW: `tests/test_imported_name_analysis.py`.
+- No other production or test file changes are authorized.
+- Frozen production modules: `python_ast.py`, `module_inventory.py`, `absolute_resolution.py`, `relative_resolution.py`, `db_absolute_resolution.py`, `search.py`; existing frozen regression tests must not be modified.
+- Public API: `analyze_named_import(record, inventory, target_sources) -> ImportNameAnalysis`.
+- Required properties: pure and deterministic; immutable result objects; preservation of original `ImportRecord` identity; candidate-scoped evidence with original root/file provenance; compatibility with the frozen absolute and relative resolvers; no filesystem/DB/network access.
+- Mandatory acceptance checks A01–A23 and binding corrections F1–F6 are recorded in the approved scope section of the hook guide; they are **not** asserted as passing here.
+- Explicitly excluded: wildcard/`__all__` analysis (2C-3B-2), SQLite schema/persistence/query changes, CLI integration (2C-4), dependency graphs, MCP/DeepWiki integration, runtime import execution, and unrelated refactoring.
+- Any production or test change outside the two authorized paths, or any requirement to modify a frozen interface, is a blocker requiring separate approval. Targeted PLAN.md updates and [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md) maintenance are already authorized under the standing workflow.
+
+**Current implementation status:** COMPLETE in this controlled-retry conversation on the `qwen3.8-openhands-192k-no-thinking` profile. Both authorized files now exist as new (untracked) files on branch `feat/phase-2c-3b-1-named-import-analysis` at base `9c393f4378c6fca157b50533fc171dc8d529c084`:
+- `src/repo_intelligence/imported_name_analysis.py` — SHA256 `b72db8904830fbd45aa7f65c5c386fcca0867fb73f2c1dd5d5aa9e60f8a0c58f`
+- `tests/test_imported_name_analysis.py` — SHA256 `df5fa65592de8d492f3c036b10a6ded66e26fcc1c773f9772bb44a769baed98c`
+
+The historical failure is now recorded as context only (explicitly historical, not current status): a prior attempt in conversation `fd4cf510-0000-4ba0-bcdc-af897fc063b5` (~20:21–21:20 EDT on 2026-10-18) ended stuck after repeated reasoning-only responses without content/tool calls; no phase test results were produced for that run (its capped profile intentionally had an empty LiteLLM Extra Body; precise cause unproven). A later recorded short tool-use probe in conversation `16dc7604-06cb-4622-83b5-a0fb30b96d92` validated only that this profile can run one read-only terminal call — not this phase. This conversation completed the implementation, the F6 purity trap, the durability tests (D11 namespace child, D12 unparseable-child retention, direct class/function/async definitions, conditional-while vs nested barriers, permutation invariance, equivalent-duplicate/conflict, literal-dot collision, empty-names rejection, deep immutability), and the focused/full regression runs.
+
+**Test evidence (this conversation; exact commands and counts):**
+- Focused: `python -m pytest tests/test_imported_name_analysis.py -q` → **51 passed** (≈0.1 s).
+- Full applicable regression: `python -m pytest tests/ -q` → **752 passed** (≈93 s).
+
+The 51 phase tests are a subset of the 752; the other 701 are the pre-existing frozen regression suite, which still passes unchanged.
+
+**Independent review:** INDEPENDENT CODEX REVIEW **PASSED** (2026-10-19) — production + tests pass against A01–A23, corrected D1–D17 and F1–F6; 24 independent probes + 5 supplemental checks clean at the verified source `b72db890…` / test `df5fa655…`; no blocking code/test findings. Review and acceptance are distinct gates.
+
+**Completion-guard and standing-workflow installation (2026-10-18):** AGENTS.md and `docs/phase-workflow.md` were written as part of the standing phase-workflow installation. Hook configuration (`.openhands/hooks.json` + `.openhands/phase2c3b1_stop_guard.py`) exists in the working tree (protected, hash-verified unchanged in this conversation). Backup (per the handoff record): `/home/openhands/.openhands/project-workflow-backups/20261019T020212Z-a5f13e2a`. Branch `feat/phase-2c-3b-1-named-import-analysis` and HEAD `9c393f4378c6fca157b50533fc171dc8d529c084` were preserved. The existing Stop hook's basic checks and the independent acceptance gates remain separate gates and are **not** asserted as passing here.
+
+**Next gate:** **MERGE.** The user has explicitly accepted Phase 2C-3B-1 on 2026-10-19 UTC. The remaining step is to merge the pushed branch into `main` (or PR, per the project's workflow). Acceptance does NOT auto-authorize or start Phase 2C-3B-2; that remains a separate user decision.
 
 ## 6. Remaining Phase 2C milestones
 
-### Phase 2C-3 — Relative and imported-name resolution (PENDING)
+### Phase 2C-3B-2 — Wildcard / `__all__` named-import analysis (PROPOSED)
 
-- Interpret package context for `from . import x`, `from ..pkg import y` and related relative imports.
-- Model *imported-name* uncertainty separately from resolving the explicitly named parent module; distinguish attributes, submodules and wildcard imports.
-- Preserve ambiguity and evidence; do not infer runtime exports or dynamic import paths without explicit scope approval.
+- Proposed extension after 2C-3B-1 acceptance; would extend named-import evidence to `from ... import *` and `__all__`-governed exports.
+- Not approved; do not start until separately authorized and the 2C-3B-1 acceptance chain is complete.
 
 ### Phase 2C-4 — Query/API exposure (PENDING)
 
@@ -209,7 +241,13 @@ Next prerequisite: ...
 
 ## 10. Decision and change log
 
-- **2026-10-14 — 2C-2B ARCHITECTURE APPROVED / IMPLEMENTATION AUTHORIZED:** [Architecture approval](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) records accepted decisions A–E. Implementation is authorized within the documented scope; tests, independent review, and merge are still pending.
+- **2026-10-19 — 2C-3B-1 USER ACCEPTED (2026-10-19 UTC) — MERGE PENDING:** The project owner explicitly authorized acceptance of Phase 2C-3B-1, a two-commit workflow (source+test+contract+PLAN in one commit; the five workflow files in the second), push of the feature branch, and filing a PR against `main` (no merge). Acceptance is based on: focused **51 passed** + full **752 passed** suite (re-verified in this conversation at the verified hashes), independent Codex review **PASSED** (24 independent probes + 5 supplemental checks, no blocking findings), and the A01–A23 + F1–F6 / corrected D1–D17 matrix. Two new files: `src/repo_intelligence/imported_name_analysis.py` (SHA256 `b72db890…`), `tests/test_imported_name_analysis.py` (SHA256 `df5fa655…`). Working-tree state at authorization: branch `feat/phase-2c-3b-1-named-import-analysis`, HEAD `9c393f4378c6fca157b50533fc171dc8d529c084`, index empty, `PLAN.md` modified (this entry + prior reconciliation), 8 untracked files (both phase files + 5 workflow files + contract doc). Merge and Phase 2C-3B-2 start remain separate user decisions. This entry supersedes the "incomplete / files absent / review pending" statements in this file; those remain only as historical context.
+- **2026-10-19 — 2C-3B-1 IMPLEMENTED + INDEPENDENT CODEX REVIEW PASSED; USER ACCEPTANCE PENDING (historical — superseded by the 2026-10-19 ACCEPTED entry above):** Controlled-retry conversation on the `qwen3.8-openhands-192k-no-thinking` profile created both authorized new files and brought the suite green. Evidence: focused `python -m pytest tests/test_imported_name_analysis.py -q` → **51 passed** (≈0.1 s); full `python -m pytest tests/ -q` → **752 passed** (≈93 s; 51 phase tests + 701 pre-existing frozen regression tests, all unchanged). Independent Codex review **PASSED** (24 independent probes + 5 supplemental checks at the verified hashes, no blocking code/test findings). New-file hashes: `src/repo_intelligence/imported_name_analysis.py` = `b72db8904830fbd45aa7f65c5c386fcca0867fb73f2c1dd5d5aa9e60f8a0c58f`; `tests/test_imported_name_analysis.py` = `df5fa65592de8d492f3c036b10a6ded66e26fcc1c773f9772bb44a769baed98c`. Contract record: [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md). Protected files (`.openhands/hooks.json`, `.openhands/phase2c3b1_stop_guard.py`, `AGENTS.md`, `docs/openhands-stop-hooks.md`, `docs/phase-workflow.md`) hash-verified byte-for-byte unchanged; branch `feat/phase-2c-3b-1-named-import-analysis` and HEAD `9c393f4378c6fca157b50533fc171dc8d529c084` preserved; index clean (no staged changes). No staging/commit/push/merge performed. **USER ACCEPTANCE PENDING**; acceptance, merge, freeze, and 2C-3B-2 start remain explicit user decisions. This entry supersedes every "files absent / implementation incomplete / awaiting review" statement for current status; those prior statements are retained only as historical reconciliation context.
+- **2026-10-18 — 2C-3B-1 APPROVED / IMPLEMENTATION INCOMPLETE (HISTORICAL — superseded by the 2026-10-19 entry above):** The approved scope, acceptance checks A01–A23, binding corrections F1–F6, and explicit exclusions for 2C-3B-1 are recorded in [`docs/openhands-stop-hooks.md`](docs/openhands-stop-hooks.md). Authorized paths are exactly `src/repo_intelligence/imported_name_analysis.py` + `tests/test_imported_name_analysis.py`. As of this entry the two files remain absent in the working tree on branch `feat/phase-2c-3b-1-named-import-analysis` (HEAD `9c393f4`; local `main` and `origin/main` refs point to the same commit — live GitHub freshness not checked in this reconciliation). Prior attempt in conversation `fd4cf510-0000-4ba0-bcdc-af897fc063b5` (~20:21–21:20 EDT on 2026-10-18) ended stuck without producing the files; the precise failure cause is unproven (its capped profile intentionally had an empty LiteLLM Extra Body). A separately recorded successful short tool-use probe in conversation `16dc7604-06cb-4622-83b5-a0fb30b96d92` (outside this project, `qwen3.8-openhands-192k-no-thinking`) validates only a single read-only Python terminal call + final reply, not 2C-3B-1 phase/model/hook behavior. No phase test results were produced by the failed run or rerun during this reconciliation.
+- **2026-10-18 — STANDING PHASE-WORKFLOW + 2C-3B-1 STOP HOOK INSTALLED (documentation-only changes):** AGENTS.md and `docs/phase-workflow.md` written; hook set `.openhands/hooks.json` + `.openhands/phase2c3b1_stop_guard.py` present in the working tree (untracked). Branch `feat/phase-2c-3b-1-named-import-analysis` and HEAD `9c393f4` were preserved by that installation. Out-of-repo backup: `/home/openhands/.openhands/project-workflow-backups/20261019T020212Z-a5f13e2a`. The current fresh conversation demonstrably received the standing workflow rules at start. The Stop hook's basic checks and the independent acceptance gates remain separate gates and are **not** asserted as passing by this entry.
+- **2026-10-17 — 2C-3A MERGED — ACCEPTANCE NOT REVERIFIED:** `9c393f4378c6fca157b50533fc171dc8d529c084` ("Phase 2C-3A: Pure Relative Module-Target Resolution (#3)") merged per local `main` and `origin/main` refs in this checkout (live GitHub freshness not checked in this reconciliation). Commit history records Codex P2 findings addressed, relative source-context ordering validated, and overlapping-root ambiguity assertions corrected. Working-tree files: `src/repo_intelligence/relative_resolution.py`, `tests/test_relative_resolution.py`. No freeze, broader acceptance, or re-verified review pass is asserted by this entry.
+- **2026-10-14 — 2C-2B MERGED — ACCEPTANCE NOT REVERIFIED (recorded at reconciliation on 2026-10-18):** Merge commit `730121fff40fc223c7fde29bba58ca9e26897748` (PR #2, branch `feat/phase-2c-2b-db-absolute-resolution`, source `c800d03`) is present in local `git log` in this checkout. Working-tree files: `src/repo_intelligence/db_absolute_resolution.py`, `tests/test_db_absolute_resolution.py`. The 2026-10-14 pre-merge approval record remains in [`PHASE_2C_2B_ARCHITECTURE_APPROVED.md`](PHASE_2C_2B_ARCHITECTURE_APPROVED.md). Live GitHub freshness not checked; independent acceptance, Codex review and freeze were not reverified by this entry.
+- **2026-10-14 — 2C-2B ARCHITECTURE APPROVED / IMPLEMENTATION AUTHORIZED** (superseded by the merge entry above): [Architecture approval](PHASE_2C_2B_ARCHITECTURE_APPROVED.md) records accepted decisions A–E.
 - **2026-10-14 — 2C-2A MERGED / COMPLETE:** GitHub [PR #1](https://github.com/ChiefDamascus/repo-intelligence/pull/1) is merged (`d4fc71d18eff7f2d0e7f41af781df2125d7a4f22`). Pure resolver added without touching frozen components.
 - **2026-10-14 — 2C-2B PLANNING:** Began read-only database-backed adapter architecture; **no implementation authorized**. Strict read-only constraint rules out direct reuse of the `get_imports()` helper because it contains schema-ensuring DDL.
 - **2026-10-11 — 2C-1 FROZEN:** Final R3 Codex review reported PASS; frozen base commit later verified as `039b399807a9b844e11acae35171464a5e02483a`.
@@ -217,4 +255,4 @@ Next prerequisite: ...
 
 ## 11. Source and verification limits
 
-This plan draws on the previously uploaded *Repo Intelligence — Complete Project Roadmap*, prior milestone review context and **read-only** GitHub inspection of current `main` and PR #1 on 2026-10-14. The older uploaded roadmap listed Phase 2C-1R3 as pending; the current status above intentionally supersedes that older snapshot. The local OpenHands workspace was **not** mounted into this chat, and no test suite was executed or implementation file altered while writing this plan. Only Markdown artifacts were prepared for addition to the repository.
+This plan draws on the previously uploaded *Repo Intelligence — Complete Project Roadmap*, prior milestone review context and **read-only** GitHub inspection of current `main` and PR #1 on 2026-10-14. The older uploaded roadmap listed Phase 2C-1R3 as pending; the current status above intentionally supersedes that older snapshot. The original 2026-10-14 write-up had the OpenHands workspace not mounted; only Markdown artifacts were prepared. The 2026-10-18 reconciliation (this entry) performed **read-only** inspection of this checkout's Git history (`git log --merges`, `git show`, `git status`, `git branch`) and read the existing documentation in `docs/openhands-stop-hooks.md` and `docs/phase-workflow.md`; no tests were executed and no implementation file was altered. **Update 2026-10-19 (UTC):** that "files absent" statement is superseded — this controlled-retry conversation created both authorized files, the focused (51) and full (752) suites pass, the independent Codex review **PASSED**, and the user has explicitly **accepted** Phase 2C-3B-1 (2026-10-19 UTC). Pending: merge to `main` (separate user decision) and Phase 2C-3B-2 start (separate user decision). Live GitHub freshness not checked in this checkout.
