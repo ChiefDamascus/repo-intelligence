@@ -4,7 +4,7 @@ Narrow, deterministic adapter from an *existing* repo-intelligence SQLite
 index to the frozen Phase 2C-2A pure resolver
 :func:`repo_intelligence.absolute_resolution.resolve_absolute_import`.
 
-Guarantees (per PHASE_2C_2B_ARCHITECTURE_APPROVED.md):
+Guarantees (per docs/phase-2c-2b-architecture-approved.md):
 
 * **Read-only.**  The index is opened through a SQLite URI with
   ``mode=ro`` plus ``PRAGMA query_only=ON`` (defense in depth); only

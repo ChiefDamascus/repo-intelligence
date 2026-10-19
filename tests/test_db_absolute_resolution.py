@@ -1,7 +1,7 @@
 """Phase 2C-2B focused tests: read-only SQLite adapter.
 
 Covers the acceptance requirements (D) in
-PHASE_2C_2B_ARCHITECTURE_APPROVED.md, plus a few fail-closed checks
+docs/phase-2c-2b-architecture-approved.md, plus a few fail-closed checks
 required by section 5 (C).
 """
 from __future__ import annotations
