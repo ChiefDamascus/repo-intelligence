@@ -1,10 +1,26 @@
 # Repository Intelligence
 
-A reusable, local, offline-first repository intelligence system. It scans a codebase, produces a file inventory with language classification and SHA-256 integrity hashes, persists all data to an external SQLite database, provides FTS5 full-text search over indexed text, and performs static Python analysis: AST symbol extraction, import extraction, deterministic absolute-import and relative-import module-target resolution, and named imported-item static evidence analysis. Designed to support coding agents and developers exploring unfamiliar repositories.
+A local, offline-first command-line tool for exploring Python repositories. Repo Intelligence builds a **searchable catalog** of a repository — its files, and its Python functions, classes, methods, and import statements — into a local SQLite index you can query from the `repo-index` command line.
+
+You install the tool, build an index of a target repository, and then query that index with `repo-index` subcommands. It is a **local, offline-first code-exploration tool**: it does not require network access, and it is **not** an AI assistant, chat interface, or autonomous coding agent.
+
+Typical flow:
+
+```bash
+repo-index build /path/to/repo     # create the index (one-time / after changes)
+cd /path/to/repo                   # run query commands from the indexed directory
+repo-index stats                    # inspect what was captured
+repo-index files --lang python      # list indexed Python files
+repo-index symbols --kind function  # find functions
+repo-index search-files "def main"  # full-text search of indexed content
+repo-index imports --kind from_import  # list import statements
+```
+
+For a guided walkthrough of your first run, see [Your First Five Minutes](#your-first-five-minutes-with-repo-intelligence). For the full per-command reference, see [CLI Usage](#cli-usage).
 
 ## Current Status
 
-`repo-intelligence` implements Phase 1 (file scanning, indexing, and text search) plus the static-analysis milestones through Phase 2C-3B-1. The following capabilities are already present and queryable:
+`repo-intelligence` implements Phase 1 (file scanning, indexing, and text search) plus the static-analysis milestones through Phase 2C-3B-2. The following capabilities are already present and queryable:
 
 - File inventory, language classification, and SHA-256 hashing (Phase 1)
 - FTS5 full-text search over indexed text content (Phase 1)
@@ -14,8 +30,9 @@ A reusable, local, offline-first repository intelligence system. It scans a code
 - Pure, deterministic absolute-import resolution (Phase 2C-2A) and its read-only database-backed adapter (Phase 2C-2B)
 - Pure relative-import module-target resolution (Phase 2C-3A)
 - Named imported-item static evidence analysis (Phase 2C-3B-1)
+- Wildcard imported-item and `__all__` static evidence analysis (Phase 2C-3B-2)
 
-These are **static, programmatic** analyses performed against supplied inputs; they do not execute, import, or load target code. Extraction of symbols and import statements surfaces via `repo-index symbols` and `repo-index imports`; the absolute-import and relative-import module-target resolvers and the named imported-item static evidence analysis are not yet exposed as a subcommand. The named imported-item analysis returns conservative static evidence against the supplied module inventory and source text, not a confirmed runtime binding. Embeddings, vector/semantic search, documentation generation, LLM integration, and MCP integration are **not** implemented (see *Limitations* below).
+These are **static, programmatic** analyses performed against supplied inputs; they do not execute, import, or load target code. Extraction of symbols and import statements surfaces via `repo-index symbols` and `repo-index imports`; the module-target resolvers and the named-imported-item and wildcard static-evidence analyses are not yet exposed as a subcommand — they are exposed as module-qualified Python APIs (e.g. `repo_intelligence.wildcard_import_analysis.analyze_wildcard_import`, `repo_intelligence.imported_name_analysis.analyze_named_import`), not CLI commands. The static-evidence analyses return conservative static evidence against the supplied module inventory and source text, not a confirmed runtime binding. Embeddings, vector/semantic search, documentation generation, LLM integration, and MCP integration are **not** implemented (see *Limitations* below).
 
 ## Project Purpose
 
@@ -41,9 +58,107 @@ pip install .
 
 Development dependencies include `pytest`.
 
+## Your First Five Minutes with Repo Intelligence
+
+A practical run-through on a small Python repository. We'll index a hypothetical project at `/projects/my-application` and then query it. (This is separate from the directory you installed Repo Intelligence from: `/projects/my-application` is the **target** you analyze, not the tool's source.)
+
+**Prerequisites**
+
+- Python **3.11 or newer** (check with `python --version`).
+- A project directory to index — here, `/projects/my-application`.
+
+**1. Install the tool (preferably in a virtual environment)**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# run this from the directory containing Repo Intelligence's own source
+pip install .
+```
+
+After this, the `repo-index` command is available.
+
+**2. Build the index of the target repository**
+
+```bash
+repo-index build /projects/my-application
+```
+
+This walks the target directory (read-only), reads its source files, and writes **one SQLite database file** that holds the index. By default that file lives at `<XDG_DATA_HOME or ~/.local/share>/repo-intelligence/<repo-id>/index.db` — outside the target repository; pass `--index-path` to write it somewhere else (e.g. into the target). It does **not** rewrite, edit, or delete the target's source files. See [Index Storage](#index-storage) and [Safety and Exclusions](#safety-and-exclusions).
+
+**3. Move into the project (so the query commands find that index)**
+
+```bash
+cd /projects/my-application
+```
+
+Query subcommands use the database of the **current directory** when no `--db-path` is given, so running them from the same directory you indexed makes them find the right database.
+
+**4. Look at what was captured**
+
+```bash
+repo-index stats
+```
+
+Shows the file count, total bytes, language breakdown, and git metadata.
+
+**5. Find Python code and text**
+
+```bash
+repo-index files --lang python          # list indexed Python files
+repo-index symbols --kind function     # list functions
+repo-index symbols --kind class        # list classes
+repo-index search-files "def main"     # full-text search of indexed content
+repo-index search-files "like:*.py"    # match file paths with a glob
+```
+
+**6. Inspect imports**
+
+```bash
+repo-index imports --kind from_import   # from-import statements
+repo-index imports --module os          # imports of a specific module
+```
+
+**7. Rebuild after the source changes**
+
+```bash
+repo-index build /projects/my-application
+```
+
+Rebuilding refreshes the index (it recreates the database) so it reflects the current source. You only need to rebuild when the target repository has changed.
+
+That's the core loop: **build → cd → query**, and rebuild when the source changes. For the full options of every command, see [CLI Usage](#cli-usage).
+
+## Quick Reference
+
+All six `repo-index` commands:
+
+| Command | What it does | Common options |
+|---|---|---|
+| `repo-index build <repo>` | Scan a directory and create/refresh the SQLite index (read-only on the target) | `--index-path`, `--ignore-dirs` |
+| `repo-index stats` | Show index statistics (counts, bytes, languages, git metadata) | `--db-path`, `--json` |
+| `repo-index files` | List indexed files (inventory) | `--lang`, `--path`, `--limit`, `--offset`, `--json` |
+| `repo-index search-files <query>` | Full-text search of indexed content, or `like:glob` path match | `--db-path`, `--json` |
+| `repo-index symbols` | List extracted Python symbols (functions, classes, methods) | `--name`, `--kind`, `--file`, `--limit`, `--json` |
+| `repo-index imports` | List extracted import / from-import statements and names | `--module`, `--name`, `--kind`, `--file`, `--limit`, `--json` |
+
+**Essential terms**
+
+- **Index** — the SQLite database the tool builds from a target. It stores copies of indexed text, file metadata, symbols, and imports.
+- **Target repository** — the directory you point `repo-index build` at. The tool only *reads* it.
+- **Index database** — the single `.db` file that holds the index. By default it lives at `<XDG_DATA_HOME or ~/.local/share>/repo-intelligence/<repo-id>/index.db`; set `--index-path` to change it.
+- **Symbol** — a named definition extracted from Python source (function, class, or method).
+- **Import statement** — an `import` or `from … import …` statement, plus the names it imports.
+- **Full-text search** — FTS5 search over the *content* of text files (not vector/semantic search) — see [Search Behavior](#search-behavior).
+
+**Indexing does not modify your source code.** `repo-index build` reads the target's source files and writes/recreates the **index database** file. By default that file is stored at `<XDG_DATA_HOME or ~/.local/share>/repo-intelligence/<repo-id>/index.db` (outside the target); `--index-path` controls exactly where the database write goes. It does not rewrite, edit, or move the target's source files. Rebuild recreates the same database file.
+
+> **Sensitive content:** the index stores copies of the text it indexes, which may contain credentials, personal data, confidential or third-party copyrighted material. Secret detection/redaction is **not** implemented. Configure the target's `.gitignore` before indexing (`--ignore-dirs` excludes directory names, not individual secret files), index only material you are authorized to process, and protect the database — by default under `<XDG_DATA_HOME or ~/.local/share>/repo-intelligence/`, or wherever `--index-path` points. See [Safety and Exclusions](#safety-and-exclusions).
+
 ## CLI Usage
 
-The `repo-index` console entry point (installed by `pyproject.toml`) provides six subcommands: `build`, `stats`, `files`, `search-files`, `symbols`, and `imports`.
+The `repo-index` console entry point (installed by `pyproject.toml`) provides six subcommands: `build`, `stats`, `files`, `search-files`, `symbols`, and `imports`. Each is documented in detail below; see the [Quick Reference](#quick-reference) for a one-line summary of each.
 
 ### Build an index
 
@@ -79,7 +194,7 @@ Additional `--ignore-dirs NAME` options can be supplied to exclude extra directo
 repo-index stats [--db-path PATH] [--json]
 ```
 
-Displays total file count, total bytes, language breakdown, and git metadata. When no `--db-path` is given, the database at the current directory's computed external location is used (same hash derivation as `build`). Output can be rendered as valid JSON with `--json`.
+Displays total file count, total bytes, language breakdown, and git metadata. When no `--db-path` is given, the database for the **current directory** is used (same hash derivation as `build`); point `--db-path` explicitly at the target's database when you run it from elsewhere. Output can be rendered as valid JSON with `--json`.
 
 ### List indexed files
 
@@ -137,7 +252,7 @@ repo-index imports [--db-path PATH] [--file PATH] [--module MODULE] [--name NAME
 
 Lists import / from-import statements and their imported names as extracted during `build`. The `--module` and `--name` filters match the module and an imported name respectively (exact match, not the alias); `--kind` matches the import kind (e.g. `import`, `from_import`). Output can be rendered as valid JSON with `--json`.
 
-> Note: the absolute-import and relative-import module-target resolvers and the named imported-item static evidence analysis are **programmatic** APIs; they are not yet wired to a `repo-index` subcommand.
+> Note: the absolute-import and relative-import module-target resolvers and the named-imported-item and wildcard static-evidence analyses are **programmatic** (module-qualified Python) APIs; they are not yet wired to a `repo-index` subcommand.
 
 ## Index Storage
 
@@ -159,7 +274,7 @@ The scanner skips the following directories by default:
 
 Additional exclusions:
 
-- **File-level** exclusions parse and apply patterns from the target's `.gitignore` file (supports exact names, `*.glob` patterns, directory suffixes like `logs/`, root-relative `/path`, `**/wildcard`). Note: full Git ignore specification edge cases may not all be covered.
+- **File-level** exclusions parse and apply patterns from the target's `.gitignore` file (supports exact names, `*.glob` patterns like `.env`, `.env.*`, `*.secret`, `*.key`, directory suffixes like `logs/`, root-relative `/path`, and `**/wildcard` patterns covering nested directories). Note: full Git ignore-spec edge cases (e.g. double-negation re-inclusions like `!**/important.txt`) are not guaranteed to be covered — see `Limitations` for how to handle such files safely. For secret and confidential material, prefer excluding the file or directory outright (a `.gitignore` pattern or an `--ignore-dirs NAME` entry for directory names) rather than relying on wildcard `*.glob` matching.
 - **Binary files**: detected by null-byte check in the first 8 KB and by extension whitelist (`.png`, `.jpg`, `.pdf`, `.zip`, `.so`, `.dll`, etc.) — these are still indexed for metadata but their content is **not** text-indexed.
 - **Large files**: files exceeding 10 MB are treated as binary and excluded from text indexing.
 - **Sensitive content:** The index stores copies of indexed text and may contain credentials, personal data, confidential information, or third-party copyrighted material. Secret detection and redaction are not implemented. Configure the target repository's `.gitignore` before indexing; `--ignore-dirs` excludes directory names, not individual secret files. Index only material you are authorized to process, protect the database, and review its contents before sharing it or providing it to an external service.
@@ -189,7 +304,7 @@ This project intentionally omits several advanced analysis and integration featu
 | Category | Not yet implemented |
 |---|---|
 | Static analysis | AST, symbol, and import analysis is **Python-only**; other languages are classified by extension but not parsed |
-| Resolution | Absolute-/relative-import module-target resolvers and the named imported-item static evidence analysis are programmatic APIs only; no `repo-index` subcommand |
+| Resolution | Absolute-/relative-import module-target resolvers and the named-imported-item and wildcard static-evidence analyses are programmatic (module-qualified Python) APIs only; no `repo-index` subcommand |
 | Call analysis | No caller/callee graph; no language-wide reference graph |
 | Test mapping | No test-to-production code mapping |
 | Documentation | No automatic repository documentation generation |
@@ -197,7 +312,7 @@ This project intentionally omits several advanced analysis and integration featu
 | Integration | No MCP or external API integration |
 | LLM | No LLM integration at any layer |
 | Code understanding | No cross-file semantic inference beyond the deterministic static analyses listed above |
-| Git ignore edge cases | gitignore support covers common patterns but may not implement every edge case of the full Git specification |
+| Git ignore edge cases | gitignore support covers common patterns, but is not a drop-in for the full Git ignore specification. In particular, **double-negation re-inclusions** (e.g. `**/keep.txt` after `**`) are not guaranteed to override an earlier exclusion. If a `.gitignore` relies on re-inclusion patterns to protect sensitive files, confirm by running `repo-index build` and then `repo-index search-files` or inspecting the DB. Safer approach: place the sensitive file outside the indexed directory, or use `--ignore-dirs NAME` for a directory to be excluded outright. |
 
 ## Future Phases (Planned)
 
