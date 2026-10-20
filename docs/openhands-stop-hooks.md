@@ -292,3 +292,132 @@ named hook):
   is preserved; this preparation task does not consume it (fixtures are
   outside the real repository, and the guard's state directory is only
   touched via the marker paths named above).
+
+
+## Phase 2C-4 scope and guard (approved architecture; guard prepared 2026-10-20)
+
+Approved architecture: [`docs/phase-2c-4-architecture-approved.md`](phase-2c-4-architecture-approved.md) (status: ARCHITECTURE APPROVED — implementation authorization not yet started; guard prepared). Original reviewed draft (revision 2, R1–R6 addressed): [`docs/phase-2c-4-architecture-review.md`](phase-2c-4-architecture-review.md). Scope, allowlists, guard spec, external paths, and limits: approved record §4–§8. Human approval 2026-10-20; A1–A8 and Q1–Q5 resolutions recorded in approved record §1–§3.
+
+### Implementation allowlist (three files, separate from the workflow allowlist)
+
+```
+src/repo_intelligence/resolve_query.py
+tests/test_resolve_query.py
+src/repo_intelligence/cli.py   (additive `resolve` command only)
+```
+
+- Production: one public function
+  `resolve_imports_from_index(db_path, roots, *,
+  target_sources=None, source_path=None, kind=None, module=None,
+  limit=None, offset=0) -> ResolveQueryResult` (P3 of the review) plus
+  `ResolveFilters` / `ResolvedImportRecord` /
+  `ResolveQueryResult` (P1), and
+  `resolve_to_dict(result) -> dict` (P4). Read-only adapter (not a mathematically
+  pure function); serialization performs no I/O; P2's no-aggregate
+  semantics are preserved (no new top-level status/reason).
+- Test: T1–T12 and REG coverage (approved record references review §8).
+- CLI: additive `resolve` subcommand (P5, Q1 approved). Existing six
+  commands (`build`, `stats`, `files`, `search-files`, `symbols`,
+  `imports`) remain unchanged in name and signature.
+- All other existing production modules, tests, dependencies, frozen
+  resolver/analyzer contracts, both 2C-3B-1/2C-3B-2 guard scripts, and
+  the two historical `hooks.json` registrations remain protected /
+  unchanged by this scope.
+
+### Scoped 2C-4 completion guard
+
+Installed as the 2C-4 named hook (alongside, not replacing, the 2C-3B-1
+and 2C-3B-2 named hooks):
+
+- Guard file: `.openhands/phase2c4_stop_guard.py` (new; standard-library-only).
+- Merged `hooks.json` entry (appended after the 2C-3B-2 entry under the
+  same `stop` / `matcher="*"`):
+  name `repo-intelligence-phase2c4-completion-guard`;
+  command `/usr/local/bin/python3 -B /projects/repo-intelligence/.openhands/phase2c4_stop_guard.py`;
+  synchronous, `timeout=10`, `async=false`.
+- Prefix: `PHASE2C4_GUARD` (distinct from `PHASE2C3B1_GUARD` and
+  `PHASE2C3B2_GUARD`). The retry-budget key is therefore
+  `sha256(PREFIX || project-root || session)`, giving this guard its own
+  per-conversation denial budget even when all three guards share the same
+  state directory.
+- Retry state: `/projects/.openhands-stop-guard-state-10001/retries-v1/`
+  (same external state root as the two historical guards; marker keys are
+  phase-tagged so budgets do not collide).
+- Backup and rollback: `/projects/.openhands-stop-guard-state-10001/backups/`
+  holds `AGENTS.md.bak-2C3B4-20261020T023541Z`,
+  `PLAN.md.bak-2C3B4-20261020T023541Z`,
+  `openhands-stop-hooks.md.bak-2C3B4-20261020T023541Z`,
+  `hooks.json.bak-2C3B4-20261020T023541Z`, and
+  `PRE_STATE_2C3B4.txt` (pre-preparation SHA-256 of the affected tracked
+  files, including the two historical guard scripts).
+
+### Checks performed (and not performed) by the 2C-4 guard
+
+- Performed (static, syntactic only):
+  - All three authorized files exist and are regular files (no symlinks in
+    the inspected path chain), under 1 MiB each, and parse as valid Python.
+  - `resolve_query.py` declares a top-level synchronous
+    `resolve_imports_from_index` whose first two positional parameter
+    names are `db_path`, `roots`, with no additional required positional
+    or keyword-only parameters.
+  - `tests/test_resolve_query.py` contains a top-level `test_*` function
+    or a `test_*` method inside a top-level `Test*` class.
+  - `cli.py` contains an additive `resolve` binding on the `cli` group
+    object, and all six existing commands (`build`, `stats`, `files`,
+    `search-files`, `symbols`, `imports`) remain present.
+- Not performed (not claimed by the guard):
+  - Purity, immutability, single-snapshot/read-only DB behavior, no I/O,
+    no runtime import execution.
+  - Semantic correctness of `resolve_imports_from_index`; T1–T12/REG
+    coverage; pytest collection and passing.
+  - Canonical-JSON byte-stability of `resolve_to_dict` output.
+  - Q3 mapping-validation / source-dependent determinism behavior.
+  - Q5 propagated frozen exceptions + sanitized CLI error presentation.
+  - Independent review; user acceptance; merge/freeze.
+  - Enforcement of the 2C-3B-1 or 2C-3B-2 allowlists (those guards remain
+    in place for their own scopes; this guard does not substitute for them).
+- Operational failures (missing state, malformed input, wrong working
+  directory, missing identity, timeout, corrupt markers, capacity, lock
+  contention) **fail open** — the guard returns `decision=allow` with a
+  `FAIL_OPEN` diagnostic. It never emits `deny` from an error handler.
+- Denial budget: at most one `deny` per conversation. The consumed budget
+  is persisted (atomic marker write + fsync) before the `deny` decision is
+  returned. Passing checks do not reset the budget. Subsequent failures in
+  the same conversation allow completion with the unresolved finding
+  reported.
+
+### Validation performed during this preparation (2026-10-20)
+
+- `phase2c4_stop_guard.py` AST-parses under `/usr/local/bin/python3`
+  (stdlib-only, no third-party imports).
+- `hooks.json` parses as valid JSON; the three named hooks load, and the
+  first two (2C-3B-1, 2C-3B-2) are verified byte-identical to the
+  `hooks.json.bak-2C3B4` backup — i.e. the 2C-4 registration is
+  strictly additive.
+- The 2C-3B-1 guard file was not modified (SHA-256 recorded in
+  `PRE_STATE_2C3B4.txt` as `01bf67199702be94e1f2abe69438474d40054e6cc1821dd3fcd22d538e525c83`).
+- The 2C-3B-2 guard file was not modified (SHA-256 recorded in
+  `PRE_STATE_2C3B4.txt` as `2f638afc8619ad224bdf2c662cfefa8dc3d796f74c1ed862bffefac565be9d4d`).
+- `git diff --check` run against the working tree including the new
+  untracked guard file (see the delivery report for the exact command and
+  exit status).
+- Unrelated files (`PLAN.md` at its expected pre-task SHA-256
+  `3b682480076d4378d06f76185d738befd4eebca5761b9e48451147d5cfa02a04`, the
+  2C-3B-1/2C-3B-2 implementation and test files, the two approved
+  architecture documents) retain their pre-preparation SHA-256 digests.
+
+### Handoff notes (not performed in this task)
+
+- The 2C-4 implementation must run in a fresh Agent Canvas conversation in
+  which the merged `hooks.json` (all three named hooks) is loaded at
+  conversation start. The current conversation has not reloaded the new
+  guard and does not claim to.
+- A separately authorized Git promotion of this configuration
+  (`AGENTS.md`, `PLAN.md`, `docs/phase-2c-4-architecture-approved.md`,
+  `docs/openhands-stop-hooks.md`, `.openhands/hooks.json`, and
+  `.openhands/phase2c4_stop_guard.py`) is a distinct gate; this
+  preparation task does not stage, commit, push, or merge it.
+- The single-denial budget of the current 2C-4 preparation conversation
+  is preserved; this preparation task does not consume it (fixtures, if
+  used, live outside the real repository; the guard's state directory is
+  only touched via the marker paths named above).
