@@ -26,6 +26,11 @@ from repo_intelligence.search import (
     search_files,
 )
 from repo_intelligence.scanner import scan_repo
+from repo_intelligence.db_absolute_resolution import AdapterError
+from repo_intelligence.resolve_query import (
+    resolve_imports_from_index,
+    resolve_to_dict,
+)
 
 
 def _print_json(data):
@@ -437,6 +442,143 @@ def cmd_imports(db_file, file_filter, module_filter, name_filter, kind_filter, l
             loc += ")" if rp_display else ""
             click.echo(f"  {stmt}{loc}")
         click.echo(f"\nShowing {len(rows)} of indexed import statements.")
+
+
+@cli.command("resolve")
+@click.option("--root", "roots", required=True, multiple=True, help="Package root (repeatable). At least one is required.")
+@click.option("--db-path", "db_file", default=None, help="Path to the index database. Defaults to the external location for CWD.")
+@click.option("--file", "file_filter", default=None, help="Exact source-path filter (repository-relative).")
+@click.option("--kind", "kind_filter", type=click.Choice(["import", "from_import"]), default=None, help="Exact import-kind filter.")
+@click.option("--module", "module_filter", default=None, help="Exact module filter.")
+@click.option("--limit", "limit_val", default=None, type=int, help="Maximum number of records (0 returns an empty page).")
+@click.option("--offset", "offset_val", default=0, type=int, help="Row offset for pagination.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output the P4 wire projection as JSON.")
+def cmd_resolve(roots, db_file, file_filter, kind_filter, module_filter, limit_val, offset_val, as_json):
+    """Resolve indexed import statements against the explicit package roots."""
+    # R8: pass ALL supplied roots (do not silently drop an empty one).
+    # R6: typed pre-validation BEFORE any storage lookup. The wrapper's
+    # ``_validate_scalar_args`` (argument types/values) and the frozen
+    # ``_canonical_roots`` (root canonicalization) are the TWO typed
+    # validation phases. They raise TypeError/ValueError with NO knowledge
+    # of the DB, so they are query-input problems (INVALID_QUERY / exit 2).
+    # Anything that only happens AFTER these succeed and AFTER the DB is
+    # opened (frozen tier analyser ValueError/TypeError, schema/orphan
+    # checks, engine errors) is an evidence/storage problem (exit 1,
+    # sanitized label) — NEVER re-classified from str(exc) or type name.
+    if not roots:
+        click.echo("Error: error_label=INVALID_QUERY (at least one --root is required)", err=True)
+        raise SystemExit(2)
+    if db_file is None:
+        db_file = _db_path(".")
+
+    # Typed pre-validation phase (no DB).  Import the wrapper's private
+    # validation seam so the CLI and the Python API share the exact same
+    # rules (no re-implementation, no divergence).
+    from repo_intelligence.resolve_query import _validate_scalar_args
+    from repo_intelligence.module_inventory import _canonical_roots
+    try:
+        _validate_scalar_args(
+            db_file, roots,
+            source_path=file_filter, kind=kind_filter, module=module_filter,
+            limit=limit_val, offset=offset_val,
+        )
+        _canonical_roots(roots)
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: error_label=INVALID_QUERY ({type(exc).__name__})", err=True)
+        raise SystemExit(2)
+
+    # After valid args: a missing DB is storage failure (exit 1 /
+    # INDEX_NOT_FOUND), NOT INVALID_QUERY.
+    if not os.path.exists(db_file):
+        click.echo("Error: error_label=INDEX_NOT_FOUND", err=True)
+        raise SystemExit(1)
+
+    # All scalar/roots inputs have now been typed-validated above. From
+    # here on, any TypeError/ValueError that surfaces from the frozen
+    # analyzers is an evidence-invalidation (exit 1 / EVIDENCE_INVALID) —
+    # no substring/type-name heuristics.
+    try:
+        result = resolve_imports_from_index(
+            db_file,
+            list(roots),
+            target_sources=None,
+            source_path=file_filter,
+            kind=kind_filter,
+            module=module_filter,
+            limit=limit_val,
+            offset=offset_val,
+        )
+    except (TypeError, ValueError):
+        click.echo("Error: error_label=EVIDENCE_INVALID", err=True)
+        raise SystemExit(1)
+    except AdapterError:
+        click.echo("Error: error_label=INDEX_INVALID", err=True)
+        raise SystemExit(1)
+    except FileNotFoundError:
+        click.echo("Error: error_label=INDEX_NOT_FOUND", err=True)
+        raise SystemExit(1)
+    except sqlite3.Error:
+        click.echo("Error: error_label=INDEX_READ_FAILED", err=True)
+        raise SystemExit(1)
+    except Exception:
+        click.echo("Error: error_label=EVIDENCE_INVALID", err=True)
+        raise SystemExit(1)
+
+    if as_json:
+        _print_json(resolve_to_dict(result))
+    else:
+        _print_resolve_text(result)
+
+
+def _print_resolve_text(result) -> None:
+    """Human-readable projection of a resolve result.
+
+    Absolute rows: ``<status>  <reason>  <names>  (source:line,col)``
+    followed by a ``kind=<kind>    module=<module>`` line.  Relative
+    rows: an issue line (when present), else one labeled line per
+    preserved context — context index, source root/file, status, reason —
+    without inventing an overall resolution status.
+    """
+    if not result.records:
+        click.echo("No imports resolved.")
+        return
+    for rec in result.records:
+        rp = rec.record.source_path
+        loc = f"({rp}:{rec.record.start_line}"
+        if rec.record.start_col is not None:
+            loc += f", col {rec.record.start_col}"
+        loc += ")"
+        names = ",".join(n + (f" as {a}" if a else "") for n, a in rec.record.names)
+        if rec.routing == "relative":
+            rr = rec.relative
+            if rr.issue:
+                click.echo(f"  relative  {loc}  issue={rr.issue}")
+            for i, ctx in enumerate(rr.contexts):
+                src = ctx.source_candidate
+                if src is not None:
+                    src_root = src.root.canonical if src.root else "?"
+                    src_file = src.file_path
+                else:
+                    src_root = "?"
+                    src_file = "?"
+                click.echo(
+                    f"  relative[{i}]  root={src_root}  "
+                    f"file={src_file}  status={ctx.status}  "
+                    f"reason={ctx.reason}  {loc}"
+                )
+        else:
+            ar = rec.absolute
+            status = ar.status if ar else "?"
+            reason = ar.reason if ar else ""
+            # P2: emit kind, module, names, and location deterministically;
+            # render None module as "module=(none)" (no invented name).
+            kind = rec.record.kind if rec.record.kind is not None else "(none)"
+            module = rec.record.module if rec.record.module not in (None, "") else "(none)"
+            click.echo(
+                f"  absolute  status={status}  reason={reason}  "
+                f"kind={kind}  module={module}  {names}  {loc}"
+            )
+    click.echo(f"\nResolved {result.count} of {result.total_count} import records.")
 
 
 if __name__ == "__main__":
