@@ -301,12 +301,39 @@ def has_tests(tree):
 
 
 def command_names(tree):
-    """Collect candidate command names from `cli.<name>` attribute usage,
-    `cli.<name>(...)` calls, or `setattr(cli, "<name>", ...)` calls.
-    This recognizes the three common registration styles in Python CLIs.
+    """Collect registered command names from the module AST.
+
+    Recognized registration styles (all valid Click patterns):
+      * ``@cli.command("name")``                 decorator (primary pattern)
+      * ``@cli.command(name="name")``            decorator (keyword form)
+      * ``cli.add_command(fn)`` / ``cli.add_command(fn, name="name")``
+      * ``setattr(cli, "name", fn)``             direct attribute assignment
+      * ``@cli.group("name")``                   group decorator
+      * ``cli.<name>`` attribute / ``cli.<name>(...)`` method usage
+
+    The decorator form is matched only when the ``cli.command(...)`` /
+    ``cli.group(...)`` call is a function or lambda decorator, and the
+    base name (``cli``) must be a plain ``ast.Name`` (not a dotted path).
+    A decorator's first positional argument — a string constant — is taken
+    as the registered name.
     """
     names = set()
     for node in ast.walk(tree):
+        # --- @cli.command("name") / @cli.command(name="name") / @cli.group("name") ---
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (isinstance(func, ast.Attribute)
+                    and func.attr in ('command', 'group')
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == 'cli'):
+                if node.args and isinstance(node.args[0], ast.Constant) \
+                        and isinstance(node.args[0].value, str):
+                    names.add(node.args[0].value)
+                for kw in node.keywords:
+                    if kw.arg == 'name' and isinstance(kw.value, ast.Constant) \
+                            and isinstance(kw.value.value, str):
+                        names.add(kw.value.value)
+        # --- cli.<name> attribute usage, and cli.<name>(...) calls ---
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             if node.value.id == 'cli' and isinstance(node.attr, str):
                 names.add(node.attr)
@@ -315,7 +342,7 @@ def command_names(tree):
             if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
                 if func.value.id == 'cli' and isinstance(func.attr, str):
                     names.add(func.attr)
-            # setattr(cli, "name", value) pattern.
+            # --- setattr(cli, "name", value) ---
             if (isinstance(func, ast.Name) and func.id == 'setattr'
                     and len(node.args) >= 2
                     and isinstance(node.args[0], ast.Name)

@@ -406,6 +406,74 @@ and 2C-3B-2 named hooks):
   2C-3B-1/2C-3B-2 implementation and test files, the two approved
   architecture documents) retain their pre-preparation SHA-256 digests.
 
+### CLI-decorator bug fix and real-Click fixture (2026-10-20)
+
+The initial 2C-4 guard used the `command_names` function, which only
+recognized three registration styles: `@cli.command` attribute usage
+(`cli.command`, `cli.command(...)`) and `setattr(cli, "<name>", ...)`.
+The real Click implementation in the feature branch uses the standard
+decorator form `@cli.command("name")` whose Call node is the decorator
+argument — `func.value` is a `Call` (not a `Name`), and `func.attr` is
+"command", not the command name. The fixture suite for the guard used the
+`setattr` form (visible in `2C4-scope-run.py`), so it passed, but the LIVE
+guard against the real `cli.py` correctly detected zero of the seven
+command names and produced the false-positive denial:
+
+```
+cli.py is missing the additive resolve command;
+cli.py lost an existing command: build;
+... (all six existing commands + resolve reported as "lost")
+```
+
+**Root cause:** The `command_names` AST walk saw no `cli.<name>` attribute
+where `<name>` matched one of the 7 required command names, because the
+decorator argument is a string constant passed to `cli.command()`, not a
+bare attribute access on `cli`.
+
+**Fix (`.openhands/phase2c4_stop_guard.py` only):** `command_names`
+recognizes the decorator registration style by walking `ast.Call` nodes
+whose `func` is an `Attribute` with `attr in {'command','group'}` and
+`value.id == 'cli'`, and collects the first argument (string constant) or
+the `name=` keyword as the registered name — without importing or
+executing target code.
+
+**New external fixture** (outside both checkouts; recorded before writing):
+
+- Path: `/projects/.openhands-stop-guard-state-10001/fixtures/cli-decorator-run.py`
+- Fixture backup of the fixed guard:
+  `/projects/.openhands-stop-guard-state-10001/fixtures/cli-decorator-guard.bak`
+  (SHA-256 `6a621f01053431b8565c8e73e6ec4afa56a9d6e45e92bce3d1d7df9be2cf0a34`,
+  taken before the commit that introduced the fix)
+
+**Fixture result (actual run, 2026-10-20):**
+
+```
+$ python3 /projects/.openhands-stop-guard-state-10001/fixtures/cli-decorator-run.py
+=== 2C-4 GUARD CLI-DECORATOR FIXTURE (added 2026-10-20) ===
+  PASS :: synthetic Click-decorator
+       detected: ['build', 'command', 'files', 'imports', 'resolve',
+                  'search-files', 'stats', 'symbols']
+  PASS :: real feature /projects/repo-intelligence/src/repo_intelligence/cli.py
+       detected: ['build', 'command', 'files', 'imports', 'resolve',
+                  'search-files', 'stats', 'symbols']
+  PASS :: unrelated x.command(...) must NOT yield cli names
+       detected: []
+All CLI-decorator fixture assertions passed.
+```
+
+**Regression suite after the fix (isolated state dir, GUARD → fixed script):**
+
+- v3 scope fixtures P/Q/T (22 cases): all PASS
+- Live fixture on the real feature `cli.py`: all 7 required command names
+  detected (`build`, `stats`, `files`, `search-files`, `symbols`, `imports`,
+  `resolve`), confirming the live denial above was a false positive on the
+  guard side, not on the implementation.
+- The 2C-4 guard's retry state at
+  `/projects/.openhands-stop-guard-state-10001/retries-v1/` was NOT
+  reset — the real session's consumed budget (already spent on the
+  false-positive denial) is preserved and the guard continues to enforce
+  the bounded single-denial budget with the fixed detection logic.
+
 ### Handoff notes (not performed in this task)
 
 - The 2C-4 implementation must run in a fresh Agent Canvas conversation in
