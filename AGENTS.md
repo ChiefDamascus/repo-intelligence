@@ -19,48 +19,30 @@ Phase-specific sections below apply only to their named phase. When a later phas
 
 See [the project hook guide](docs/openhands-stop-hooks.md) for SDK 1.54.0 configuration, scope, validation, retry state, rollback and reuse in other workspaces.
 
-The Phase 2C-3B-1 production/test allowlist is exactly:
+**Current state (as of 2026-10-19):** Both Phase 2C-3B-1 and Phase 2C-3B-2 have been **accepted, merged, and frozen** under their respective approved scope records:
 
-- `src/repo_intelligence/imported_name_analysis.py`
-- `tests/test_imported_name_analysis.py`
+- **Phase 2C-3B-1** (named imported-item static evidence analysis) — merged as PR #4 (`merge 894af8b`, 2026-10-19). Implementation files on `main`:
+  - `src/repo_intelligence/imported_name_analysis.py`
+  - `tests/test_imported_name_analysis.py`
+- **Phase 2C-3B-2** (wildcard / `__all__` static evidence analysis) — merged as PR #5 (`merge eed78f9`, 2026-10-19). Implementation files on `main`:
+  - `src/repo_intelligence/wildcard_import_analysis.py`
+  - `tests/test_wildcard_import_analysis.py`
 
-All other existing production modules and tests remain frozen for this milestone. The separately authorized hook installation adds only `.openhands/hooks.json`, `.openhands/phase2c3b1_stop_guard.py`, this file and the hook guide. Do not expand production scope, modify OpenHands core, change the model, start Phase 2C-3B-2, stage/commit changes or merge automatically.
+Both completion guards (`.openhands/phase2c3b1_stop_guard.py` and `.openhands/phase2c3b2_stop_guard.py`) remain **wired and unchanged** in `.openhands/hooks.json`; their scope is the historical two-file allowlist for each merged phase respectively. Per the standing phase-workflow rules in this file, neither agent may expand that allowlist for a new phase. Do not modify either guard script, do not modify `hooks.json`, do not remove the guards, and do not reset the external bounded retry state. Do not weaken fail-open behavior. Any future phase (e.g. Phase 2C-4) requires a fresh, separately-approved scope record, a matching approved guard, and a fresh conversation that has loaded the merged hook configuration before implementation begins. Do not begin Phase 2C-4 or any new phase based on this file's text alone; this file is a standing-maintenance surface, not an approval.
 
-On a Stop denial, inspect the reported issue within the two-file scope and continue once. If fixing it would require frozen-code changes, report the blocker and request separate approval. The guard permits at most one denial per conversation and fails open on operational errors. An allow decision is not evidence of acceptance.
+On a Stop denial, follow the guard's own diagnostic. Continue within the guard's scope budget (at most one denial per conversation) and report any blocker that would require touching a frozen or non-allowlisted file. An allow decision from a guard is **not** evidence of acceptance, merge, or freeze — those remain separate human gates per the master plan tracker.
 
-Before acceptance, report focused tests, full applicable regression results, F1-F6 dispositions, changed files, final Git working-tree status and limitations. A01-A23 and the corrected D1-D17 matrix require verification beyond this hook. Independent Codex review remains required before acceptance and merge. Do not mark milestones complete or frozen based on hook output.
+## Phase 2C-3B-1 (merged — historical record)
 
-The historical `PLAN.md` was not updated by hook installation. Preserve the distinction between that historical plan and the separately approved Phase 2C-3B-1 scope documented in the hook guide.
+Approved architecture: [`docs/phase-2c-3b-1-approved-contract.md`](docs/phase-2c-3b-1-approved-contract.md)
+Merged as PR #4 (merge `894af8b`, 2026-10-19). Implementation files preserved on `main`. See PLAN.md §10 for the full evidence trail (acceptance, Codex review, merge commit, file SHA256s).
 
-## Phase 2C-3B-2 scope (approved)
+## Phase 2C-3B-2 (merged — historical record)
 
-Approved architecture: `docs/phase-2c-3b-2-architecture-approved.md`
-Original review: `docs/phase-2c-3b-2-architecture-review.md`
-Approved by the project owner (see §17 of the approved architecture; approval
-quote preserved in that document).
+Approved architecture: [`docs/phase-2c-3b-2-architecture-approved.md`](docs/phase-2c-3b-2-architecture-approved.md)
+Original review: [`docs/phase-2c-3b-2-architecture-review.md`](docs/phase-2c-3b-2-architecture-review.md)
+Merged as PR #5 (merge `eed78f9`, 2026-10-19). Implementation files preserved on `main`. See PLAN.md §10 for the full evidence trail.
 
-The Phase 2C-3B-2 implementation allowlist is exactly:
+## Next phase — Phase 2C-4 (PENDING — NOT AUTHORIZED)
 
-- `src/repo_intelligence/wildcard_import_analysis.py` (new — one public function
-  `analyze_wildcard_import` plus result/evidence dataclasses and code constants)
-- `tests/test_wildcard_import_analysis.py` (new — W1–W24 acceptance matrix)
-
-All other existing production modules and tests remain **frozen / protected
-unchanged** for this scope, including both Phase 2C-3B-1 files, the
-2C-3B-1 stop guard, and the existing `.openhands/` hook configuration.
-
-The scoped Phase 2C-3B-2 completion guard enforces only the static checks it
-can verify: the two authorized files exist, parse as Python, the production
-file exposes a compatible top-level `analyze_wildcard_import(record, inventory,
-target_sources)` API, and the test file has discoverable tests. It does **not**
-assert purity, immutability, semantic coverage, W1–W24 completeness, or
-regression success. It fails open on operational errors and denies at most once
-per conversation. An allow decision is not evidence of acceptance.
-
-The standalone guard (file) and the merged `hooks.json` are separate
-installation additions, outside the two-file implementation allowlist.
-Independent Codex review, W1–W24 acceptance, and user acceptance remain
-separate gates (see §12, §15, §17 of the approved architecture). Do not begin
-2C-3B-2 implementation without a fresh conversation that has loaded the merged
-hook configuration. Do not stage, commit, push, or merge. Do not advance the
-next phase without that phase's own authorization.
+Per PLAN.md master tracker, the immediate next candidate milestone is **Phase 2C-4 — Query / API exposure**, status **PENDING — NOT AUTHORIZED**. As of this document, its scope, acceptance criteria, API contract, and completion guard have **not** been approved. The standing phase-workflow rules above still apply: no production edits without an approved scope revision, no guard installation without an approved record, and no stage/commit/push outside the two approved documentation files this task touches. Starting Phase 2C-4 (or any later proposed milestone 2D/2E/3/4/5/6) requires a fresh human approval and a matching approved scoped guard, as in the prior two phases.
